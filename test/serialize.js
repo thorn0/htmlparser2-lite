@@ -1,40 +1,45 @@
-const htmlparser = require("../dist/htmlparser2-20kb");
+const { test } = require("node:test");
+const assert = require("node:assert/strict");
+const htmlparser = require("../dist/htmlparser2-lite");
 
 const { parse, serialize } = htmlparser;
 
 const roundTrip = (s, parserOptions) => serialize(parse(s, parserOptions));
 
 test("basic use case", () => {
-  expect(roundTrip("<div>z</div>")).toBe("<div>z</div>");
+  assert.equal(roundTrip("<div>z</div>"), "<div>z</div>");
 });
 
 test("quotes in attributes", () => {
-  expect(roundTrip("<div a='\"'>z</div>")).toBe('<div a="&quot;">z</div>');
+  assert.equal(roundTrip("<div a='\"'>z</div>"), '<div a="&quot;">z</div>');
 });
 
 test("unescaped less-than", () => {
-  expect(roundTrip("a < b")).toBe("a &lt; b");
+  assert.equal(roundTrip("a < b"), "a &lt; b");
 });
 
 test("recognizeSelfClosing", () => {
-  expect(roundTrip("<x1/><x2/>", { recognizeSelfClosing: true })).toBe(
+  assert.equal(
+    roundTrip("<x1/><x2/>", { recognizeSelfClosing: true }),
     "<x1></x1><x2></x2>",
   );
 });
 
 test("misc HTML", () => {
-  expect(
+  assert.equal(
     roundTrip(
       "<div></div   ><p>&lt;</p><!--<x>--><input    type=checkbox checked/>",
     ),
-  ).toBe('<div></div><p>&lt;</p><!--<x>--><input type="checkbox" checked>');
+    '<div></div><p>&lt;</p><!--<x>--><input type="checkbox" checked>',
+  );
 });
 
 test("spaceInSelfClosing", () => {
-  expect(
+  assert.equal(
     serialize(parse("<x1 /><x2 />", { recognizeSelfClosing: true }), {
       xmlMode: true,
       spaceInSelfClosing: true,
     }),
-  ).toBe("<x1 /><x2 />");
+    "<x1 /><x2 />",
+  );
 });

@@ -1,36 +1,43 @@
-const htmlparser = require("../dist/htmlparser2-20kb");
+const { test } = require("node:test");
+const assert = require("node:assert/strict");
+const htmlparser = require("../dist/htmlparser2-lite");
 
 test("it works", () => {
-  expect(htmlparser.serialize(htmlparser.create("div"))).toBe("<div></div>");
-  expect(htmlparser.serialize(htmlparser.create("div", null))).toBe(
+  assert.equal(htmlparser.serialize(htmlparser.create("div")), "<div></div>");
+  assert.equal(
+    htmlparser.serialize(htmlparser.create("div", null)),
     "<div></div>",
   );
-  expect(htmlparser.serialize(htmlparser.create("div", { class: "foo" }))).toBe(
+  assert.equal(
+    htmlparser.serialize(htmlparser.create("div", { class: "foo" })),
     '<div class="foo"></div>',
   );
-  expect(
+  assert.equal(
     htmlparser.serialize(htmlparser.create("div", { class: "foo" }, "bar")),
-  ).toBe('<div class="foo">bar</div>');
+    '<div class="foo">bar</div>',
+  );
   var node = htmlparser.create(
     "div",
     { class: "foo" },
     "bar",
     htmlparser.create("strong", null, "baz"),
   );
-  expect(htmlparser.serialize(node)).toBe(
+  assert.equal(
+    htmlparser.serialize(node),
     '<div class="foo">bar<strong>baz</strong></div>',
   );
-  expect(node.children[1].prev.data).toBe("bar");
-  expect(node.children[1].parent).toBe(node);
-  expect(
+  assert.equal(node.children[1].prev.data, "bar");
+  assert.equal(node.children[1].parent, node);
+  assert.equal(
     htmlparser.serialize(
       htmlparser.create("div", { class: "foo" }, [
         "bar",
         htmlparser.create("strong", null, "baz"),
       ]),
     ),
-  ).toBe('<div class="foo">bar<strong>baz</strong></div>');
-  expect(
+    '<div class="foo">bar<strong>baz</strong></div>',
+  );
+  assert.equal(
     htmlparser.serialize(
       htmlparser.create(
         "div",
@@ -40,12 +47,13 @@ test("it works", () => {
         "qux",
       ),
     ),
-  ).toBe('<div class="foo">bar<strong>baz</strong>qux</div>');
+    '<div class="foo">bar<strong>baz</strong>qux</div>',
+  );
 });
 
 test("ignore empty children", () => {
   var node = htmlparser.create("div", undefined, "x", null, undefined, "", "y");
-  expect(htmlparser.serialize(node)).toBe("<div>xy</div>");
+  assert.equal(htmlparser.serialize(node), "<div>xy</div>");
 });
 
 test("maintains consistency of the donor tree when taking nodes from it", () => {
@@ -53,23 +61,27 @@ test("maintains consistency of the donor tree when taking nodes from it", () => 
     "<p>foo <strong>bar</strong><em>baz</em></p>",
   )[0];
   var strong = donor.children[1];
-  expect(strong.name).toBe("strong");
+  assert.equal(strong.name, "strong");
   var created = htmlparser.create("div", "qux", strong);
-  expect(htmlparser.serialize(created)).toBe(
+  assert.equal(
+    htmlparser.serialize(created),
     "<div>qux<strong>bar</strong></div>",
   );
-  expect(donor.children.length).toBe(2);
-  expect(donor.children[0].next.name).toBe("em");
+  assert.equal(donor.children.length, 2);
+  assert.equal(donor.children[0].next.name, "em");
 });
 
 test("CSS classes shortcut", () => {
-  expect(htmlparser.serialize(htmlparser.create("span.foo"))).toBe(
+  assert.equal(
+    htmlparser.serialize(htmlparser.create("span.foo")),
     '<span class="foo"></span>',
   );
-  expect(htmlparser.serialize(htmlparser.create("span.foo.zoo"))).toBe(
+  assert.equal(
+    htmlparser.serialize(htmlparser.create("span.foo.zoo")),
     '<span class="foo zoo"></span>',
   );
-  expect(htmlparser.serialize(htmlparser.create(".foo"))).toBe(
+  assert.equal(
+    htmlparser.serialize(htmlparser.create(".foo")),
     '<div class="foo"></div>',
   );
 });
@@ -87,8 +99,9 @@ test("misc #1", () => {
       htmlparser.appendChild(el, div);
     }
   }
-  expect(fields.length).toBe(2);
-  expect(htmlparser.serialize(el)).toBe(
+  assert.equal(fields.length, 2);
+  assert.equal(
+    htmlparser.serialize(el),
     '<layout><div><field name="a"></field></div><div><field name="b"></field></div></layout>',
   );
 });

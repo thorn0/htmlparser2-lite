@@ -1,36 +1,38 @@
-const htmlparser = require("../dist/htmlparser2-20kb");
+const { describe, test } = require("node:test");
+const assert = require("node:assert/strict");
+const htmlparser = require("../dist/htmlparser2-lite");
 
 describe("htmlparser.remove", () => {
   test("with 2 args", () => {
     const dom = htmlparser.parse("<a></a><b></b>");
     const b = dom[1];
-    expect(b.prev).not.toBe(null);
-    expect(b.prev).toBe(dom[0]);
+    assert.notEqual(b.prev, null);
+    assert.equal(b.prev, dom[0]);
     htmlparser.remove(dom[0], dom);
-    expect(dom.length).toBe(1);
-    expect(dom[0]).toBe(b);
-    expect(b.prev).toBe(null);
+    assert.equal(dom.length, 1);
+    assert.equal(dom[0], b);
+    assert.equal(b.prev, null);
   });
 
   test("can be passed to Array.prototype.forEach", () => {
     const dom = htmlparser.parse("<p><a></a><b></b><a></a>");
     const links = htmlparser.findAll((n) => n.name === "a", dom);
     const b = htmlparser.findOne((n) => n.name === "b", dom);
-    expect(links.length).toBe(2);
-    expect(b.prev).not.toBe(null);
+    assert.equal(links.length, 2);
+    assert.notEqual(b.prev, null);
     links.forEach(htmlparser.remove);
-    expect(b.prev).toBe(null);
-    expect(dom[0].children.length).toBe(1);
+    assert.equal(b.prev, null);
+    assert.equal(dom[0].children.length, 1);
   });
 
   test("can remove multiple nodes", () => {
     const dom = htmlparser.parse("<a></a><b></b><a></a>");
-    expect(dom.length).toBe(3);
+    assert.equal(dom.length, 3);
     const links = htmlparser.findAll((n) => n.name === "a", dom);
-    expect(dom[1].prev).not.toBe(null);
+    assert.notEqual(dom[1].prev, null);
     htmlparser.remove(links, dom);
-    expect(dom[0].prev).toBe(null);
-    expect(dom.length).toBe(1);
+    assert.equal(dom[0].prev, null);
+    assert.equal(dom.length, 1);
   });
 
   test("can remove multiple nodes when passed array is `children` array of parent node", () => {
@@ -41,11 +43,12 @@ describe("htmlparser.remove", () => {
       </section>`,
       { xmlMode: true },
     );
-    expect(dom.length).toBe(1);
+    assert.equal(dom.length, 1);
     const nodesToRemove = dom[0].children;
-    expect(nodesToRemove.length).toBe(5);
+    assert.equal(nodesToRemove.length, 5);
     htmlparser.remove(nodesToRemove, dom);
-    expect(htmlparser.serialize(dom, { xmlMode: true })).toBe(
+    assert.equal(
+      htmlparser.serialize(dom, { xmlMode: true }),
       `<section name="section_phase"/>`,
     );
   });
