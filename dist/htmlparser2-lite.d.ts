@@ -11,11 +11,7 @@ declare namespace htmlparser {
   }
 
   type DomNode =
-    | DomTextNode
-    | DomDirectiveNode
-    | DomCommentNode
-    | DomTagNode
-    | DomCdataNode;
+    DomTextNode | DomDirectiveNode | DomCommentNode | DomTagNode | DomCdataNode;
 
   type Dom = DomNode[];
 
@@ -64,25 +60,17 @@ declare namespace htmlparser {
   class Parser {
     constructor(handler: Handler, options?: ParserOptions);
 
-    /***
-     * Parses a chunk of data and calls the corresponding callbacks.
-     */
-    write(input: string): void;
+    /** Start index of the markup that triggered the current callback. */
+    startIndex: number;
 
-    /***
-     * Parses the end of the buffer and clears the stack, calls onend.
-     */
-    end(): void;
+    /** End index (inclusive) of the markup that triggered the current callback. */
+    endIndex: number;
 
-    /***
-     * Resets the parser, parses the data & calls end.
+    /**
+     * Parses the input, calling the callbacks, `onend` last. Each call parses
+     * its input separately.
      */
-    parseComplete(input: string): void;
-
-    /***
-     * Resets buffer & stack, calls onreset.
-     */
-    reset(): void;
+    end(input: string): void;
   }
 
   function parse(
@@ -95,26 +83,31 @@ declare namespace htmlparser {
     options?: SerializerOptions,
   ): string;
 
+  type CreateArgument =
+    | DomNode
+    | string
+    | { [name: string]: string }
+    | null
+    | undefined
+    | CreateArgument[];
+
+  /**
+   * Creates an element. Strings become text nodes, nodes are moved from where
+   * they are, other objects are attributes, arrays are flattened.
+   * @param tagName Can contain CSS classes: `div.foo.bar`, `.foo` (a div)
+   */
   function create(
     tagName: string,
-    ...childrenOrAttribs: Array<
-      | DomNode
-      | string
-      | { [name: string]: string }
-      | undefined
-      | Array<DomNode | string | { [name: string]: string } | undefined>
-    >
+    ...childrenOrAttribs: CreateArgument[]
   ): DomTagNode;
 
   /** Tests whether a node is a tag (`tag`, `script` or `style`). */
   function isTag(node: DomNode): node is DomTagNode;
 
-  function getSiblings(node: DomNode): DomNode[];
-  function hasAttrib(tag: DomTagNode, name: string): boolean;
-
   /**
-   *
-   * @param node Node to remove
+   * To remove many nodes, pass them in one call, that's linear in the total
+   * number of the siblings, unlike removing them one by one.
+   * @param nodes Nodes to remove
    * @param dom Array of top-level nodes, e.g. returned from `parse`.
    * Ignored if `number`, so `forEach` can be used: `nodes.forEach(remove)`
    */
@@ -137,14 +130,15 @@ declare namespace htmlparser {
   function prepend(node: DomNode, prev: DomNode): void;
 
   /**
-   * Recursive, depth-first.
-   * @param [recursive=true]
-   * @param [limit=Infinity]
+   * Finds nodes of all types (unlike `findAll`), depth-first. It's `filter`
+   * from `domutils`, renamed so that linters don't mistake it for
+   * `Array#filter`, and without the `recurse` parameter (use `Array#filter`
+   * instead of `recurse: false`).
+   * @param [limit=Infinity] Stop after finding this many nodes
    */
-  function filter(
+  function filterNodes(
     test: (node: DomNode) => boolean,
     nodes: DomNode | DomNode[],
-    recursive?: boolean,
     limit?: number,
   ): DomNode[];
 
@@ -169,26 +163,21 @@ declare namespace htmlparser {
 
   interface Handler {
     onopentag?: (name: string, attribs: { [type: string]: string }) => void;
-    onopentagname?: (name: string) => void;
-    onattribute?: (name: string, value: string) => void;
     ontext?: (text: string) => void;
     onclosetag?: (text: string) => void;
     onprocessinginstruction?: (name: string, data: string) => void;
     oncomment?: (data: string) => void;
-    oncommentend?: () => void;
     oncdatastart?: () => void;
     oncdataend?: () => void;
-    onerror?: (error: Error) => void;
-    onreset?: () => void;
     onend?: () => void;
   }
 
   interface ParserOptions {
     /***
-     * Indicates whether special tags (<script> and <style>) should get special treatment
-     * and if "empty" tags (eg. <br>) can have children.  If false, the content of special tags
-     * will be text only. For feeds and other XML content (documents that don't consist of HTML),
-     * set this to true. Default: false.
+     * Disables HTML-specific behavior: the content of special tags (<script> and <style>)
+     * is no longer text only, "empty" tags (e.g. <br>) can have children, no tags are
+     * closed implicitly, self-closing tags are recognized. For feeds and other XML content
+     * (documents that don't consist of HTML), set this to true. Default: false.
      */
     xmlMode?: boolean;
 
@@ -198,7 +187,7 @@ declare namespace htmlparser {
     lowerCaseTags?: boolean;
 
     /***
-     * If set to true, all attribute names will be lower-cased. This has noticeable impact on speed, so it defaults to false.
+     * If set to true, all attribute names will be lower-cased. If xmlMode is disabled, this defaults to true.
      */
     lowerCaseAttributeNames?: boolean;
 

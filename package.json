@@ -1,30 +1,15 @@
 {
   "private": true,
-  "dependencies": {
-    "@thorn0/htmlparser2": "3.10.2",
-    "dom-serializer": "0.2.2",
-    "domhandler": "2.4.2",
-    "domutils": "1.7.0"
-  },
+  "browserslist": "baseline widely available with downstream",
   "devDependencies": {
-    "jest": "29.7.0",
-    "jscodeshift": "0.15.1",
-    "parcel-bundler": "1.12.5",
-    "prepack": "0.2.54",
-    "prettier": "3.1.0",
-    "typescript": "5.2.2",
-    "uglify-js": "3.17.4"
-  },
-  "alias": {
-    "dom-serializer": "./alias/dom-serializer",
-    "inherits": "./alias/inherits"
-  },
-  "resolutions": {
-    "domelementtype": "2.3.0"
+    "acorn": "8.18.0",
+    "prettier": "3.9.9",
+    "typescript": "7.0.2",
+    "uglify-js": "3.19.3"
   },
   "scripts": {
-    "build": "./build.sh",
-    "test": "jest",
+    "build": "node build.js && node --test \"test/*.js\" && tsc -p ./type-tests",
+    "test": "node --test \"test/*.js\"",
     "test-types": "tsc -p ./type-tests",
     "format": "prettier -w ."
   }

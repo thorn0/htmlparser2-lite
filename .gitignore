@@ -1,5 +1,5 @@
 /node_modules
-/dist/htmlparser2-20kb.js
+/dist/htmlparser2-lite.js
 /dist/README.md
 /.vscode
-/.cache
+/tmp
