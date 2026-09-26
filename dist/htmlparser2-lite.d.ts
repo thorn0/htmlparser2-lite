@@ -172,33 +172,44 @@ export interface Handler {
 }
 
 export interface ParserOptions {
-  /***
-   * Disables HTML-specific behavior: the content of special tags (<script> and <style>)
-   * is no longer text only, "empty" tags (e.g. <br>) can have children, no tags are
-   * closed implicitly, self-closing tags are recognized. For feeds and other XML content
-   * (documents that don't consist of HTML), set this to true. Default: false.
+  /**
+   * Parse XML (e.g. feeds) instead of HTML: the text of <script>, <style>,
+   * etc. isn't raw, elements like <br> aren't void, no elements are closed
+   * implicitly, `/>` closes elements, CDATA sections are recognized, names
+   * aren't lowercased by default.
+   *
+   * Default: `false`
    */
   xmlMode?: boolean;
 
-  /***
-   * If set to true, all tags will be lower-cased. If xmlMode is disabled, this defaults to true.
+  /**
+   * Lowercase tag names.
+   *
+   * Default: `true` in HTML, `false` in XML (`!xmlMode`)
    */
   lowerCaseTags?: boolean;
 
-  /***
-   * If set to true, all attribute names will be lower-cased. If xmlMode is disabled, this defaults to true.
+  /**
+   * Lowercase attribute names.
+   *
+   * Default: `true` in HTML, `false` in XML (`!xmlMode`)
    */
   lowerCaseAttributeNames?: boolean;
 
-  /***
-   * If set to true, CDATA sections will be recognized as text even if the xmlMode option is not enabled.
-   * NOTE: If xmlMode is set to true then CDATA sections will always be recognized as text.
+  /**
+   * In HTML too, parse CDATA sections as CDATA (`oncdatastart`, `ontext`,
+   * `oncdataend`, `cdata` nodes) instead of comments. Always on in XML.
+   *
+   * Default: `false`
    */
   recognizeCDATA?: boolean;
 
-  /***
-   * If set to true, self-closing tags will trigger the onclosetag event even if xmlMode is not set to true.
-   * NOTE: If xmlMode is set to true then self-closing tags will always be recognized.
+  /**
+   * In HTML too, close elements written as self-closing (`<x/>`). Always on in
+   * XML, and in HTML inside <svg> and <math> (but not inside elements like
+   * <desc> or <mi>, which contain HTML).
+   *
+   * Default: `false`
    */
   recognizeSelfClosing?: boolean;
 
@@ -216,22 +227,67 @@ export interface ParserOptions {
    *
    * A function: decodes the given text, e.g. with the `entities` package:
    * `(text, inAttribute) => inAttribute ? decodeHTMLAttribute(text) : decodeHTML(text)`.
+   *
+   * Default: `false`
    */
   decodeEntities?: boolean | ((text: string, inAttribute: boolean) => string);
 }
 
+/** Options of `parse` for building the DOM. */
 export interface HandlerOptions {
+  /**
+   * Replace each run of whitespace in text with a single space.
+   *
+   * Default: `false`
+   */
   normalizeWhitespace?: boolean;
+
+  /**
+   * Set `startIndex` of nodes: the index of their first character in the
+   * input.
+   *
+   * Default: `false`
+   */
   withStartIndices?: boolean;
+
+  /**
+   * Set `endIndex` of nodes: the index of their last character in the input
+   * (for elements, of their end tag; an element closed implicitly by a start
+   * tag ends right before it).
+   *
+   * Default: `false`
+   */
   withEndIndices?: boolean;
 }
 
 export interface SerializerOptions {
+  /**
+   * `true`: output XML: elements without children self-close (`<x/>`),
+   * elements like <br> aren't void, attributes always get values, no text is
+   * raw.
+   *
+   * `"foreign"`: output HTML as inside <svg> or <math>: elements without
+   * children self-close and attributes always get values, except inside
+   * elements like <desc> or <mi>, which contain HTML.
+   *
+   * `false`: output HTML, switching to `"foreign"` inside <svg> and <math>.
+   *
+   * Default: `false`
+   */
   xmlMode?: boolean | "foreign";
+
+  /**
+   * Write self-closing elements as `<x />` instead of `<x/>`.
+   *
+   * Default: `false`
+   */
   spaceInSelfClosing?: boolean;
+
   /**
    * For a DOM parsed with `decodeEntities`: encode `&` as well, and `>` in
    * text and `<` in attribute values (needed for XML).
+   *
+   * Default: `false`
    */
   decodeEntities?: boolean;
 }

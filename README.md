@@ -29,6 +29,37 @@ Also works with `require("htmlparser2-lite")`, AMD, and as a `<script>` that def
 </script>
 ```
 
+## Options
+
+`parse(markup, options)` and `new Parser(handler, options)`:
+
+| Option                    | Default                                    | Effect                                                                                                          |
+| ------------------------- | ------------------------------------------ | --------------------------------------------------------------------------------------------------------------- |
+| `xmlMode`                 | `false`                                    | Parse XML: no raw text, void or implicitly closed elements, `/>` closes elements, CDATA sections are recognized |
+| `lowerCaseTags`           | `true` in HTML, `false` in XML             | Lowercase tag names                                                                                             |
+| `lowerCaseAttributeNames` | `true` in HTML, `false` in XML             | Lowercase attribute names                                                                                       |
+| `recognizeCDATA`          | `false` (always on in XML)                 | Parse CDATA sections as CDATA instead of comments                                                               |
+| `recognizeSelfClosing`    | `false` (always on in XML, SVG and MathML) | Close elements written as self-closing (`<x/>`)                                                                 |
+| `decodeEntities`          | `false`                                    | Decode character references, see [below](#decoding-character-references)                                        |
+
+`parse` only:
+
+| Option                | Default | Effect                                                                                      |
+| --------------------- | ------- | ------------------------------------------------------------------------------------------- |
+| `normalizeWhitespace` | `false` | Replace each run of whitespace in text with a single space                                  |
+| `withStartIndices`    | `false` | Set `startIndex` of nodes: the index of their first character in the input                  |
+| `withEndIndices`      | `false` | Set `endIndex` of nodes: the index of their last character (for elements, of their end tag) |
+
+`serialize(dom, options)`:
+
+| Option               | Default | Effect                                                                                                                       |
+| -------------------- | ------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `xmlMode`            | `false` | `true`: output XML. `"foreign"`: output HTML as inside SVG or MathML (which `false` switches to inside `<svg>` and `<math>`) |
+| `spaceInSelfClosing` | `false` | Write self-closing elements as `<x />` instead of `<x/>`                                                                     |
+| `decodeEntities`     | `false` | For a DOM parsed with `decodeEntities`: encode `&` too (and for XML, `>` in text and `<` in attribute values)                |
+
+See the [type definitions](https://github.com/thorn0/htmlparser2-lite/blob/master/dist/htmlparser2-lite.d.ts) for details.
+
 ## Decoding character references
 
 By default, character references like `&amp;` stay as they are. With the `decodeEntities` option, they're decoded in text and
