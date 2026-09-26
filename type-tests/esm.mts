@@ -4,6 +4,13 @@ import { parse, type DomNode } from "htmlparser2-lite";
 const nodes: DomNode[] = parse("<p>");
 console.log(nodes);
 
+const decoded = parse("&amp;", {
+  decodeEntities: (text: string, inAttribute: boolean) =>
+    inAttribute ? text : text.toUpperCase(),
+});
+console.log(htmlparser.serialize(decoded, { decodeEntities: true }));
+parse("&amp;", { decodeEntities: true, xmlMode: true });
+
 const dom = htmlparser.parse("<b>1</b><p><b>2</b>");
 const x = dom[0];
 if (x.attribs) {

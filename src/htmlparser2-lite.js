@@ -7,9 +7,6 @@ const FOREIGN_ELEMENTS = words("svg math");
 const INTEGRATION_POINTS = words(
   "mi mo mn ms mtext annotation-xml foreignObject desc title",
 );
-const UNENCODED_ELEMENTS = words(
-  "style script xmp iframe noembed noframes plaintext noscript",
-);
 const SPECIAL_ELEMENTS = words("script style");
 const TAG_TYPES = words("tag script style");
 
@@ -47,15 +44,92 @@ const tagType = (name) => (SPECIAL_ELEMENTS.has(name) ? name : "tag");
 
 const lowerCase = (str, enabled) => (enabled ? str.toLowerCase() : str);
 
+// Whether the text of the element is raw: in HTML, the text of these elements
+// isn't decoded when parsing, and isn't encoded when serializing
+const isRawText = (name, xmlMode) =>
+  !xmlMode &&
+  /^(style|script|xmp|iframe|noembed|noframes|plaintext|noscript)$/i.test(name);
+
+const ESCAPES = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" };
+
+// Checking first is much faster: most strings have nothing to replace, and
+// replaceAll is slow even when it finds nothing
+const escape = (str, chars) => {
+  for (const char of chars) {
+    if (str.includes(char)) str = str.replaceAll(char, ESCAPES[char]);
+  }
+  return str;
+};
+
+const XML_ENTITIES = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'" };
+
+// Only references terminated with ";" are decoded in XML
+const decodeXML = (text) =>
+  text.replace(
+    /&(?:#(\d+|[xX][\da-fA-F]+)|(amp|lt|gt|quot|apos));/g,
+    (reference, number, name) => {
+      if (name) return XML_ENTITIES[name];
+      // Number() parses "0x..." as hexadecimal and "0..." as decimal
+      const codePoint = +`0${number}`;
+      // `>> 11 == 27`: surrogates (0xd800 to 0xdfff)
+      return !codePoint || codePoint > 0x10ffff || codePoint >> 11 == 27
+        ? "�"
+        : String.fromCodePoint(codePoint);
+    },
+  );
+
+// An element in an inert document (nothing is loaded or run in it). It's
+// used only synchronously, so it can be shared.
+let element;
+
+// Decodes HTML character references with the browser's own parser, so that
+// its table of named references doesn't need to be bundled. Each reference is
+// decoded separately, in text or in an attribute (where they're decoded
+// differently depending on the next character, hence the optional "="). The
+// references contain only [&#\w;=] characters, so no markup can get in.
+const createBrowserDecoder = () => {
+  if (!globalThis.document) {
+    throw Error("decodeEntities: true needs a DOM, pass a function");
+  }
+  element ??= document.implementation.createHTMLDocument().createElement("div");
+  const decodeReference = (reference, inAttribute) => {
+    element.innerHTML = inAttribute ? `<a title="${reference}">` : reference;
+    return inAttribute ? element.firstChild.title : element.textContent;
+  };
+  // Keys start with "true" or "false", so a plain object is safe
+  const cache = {};
+  return (text, inAttribute) =>
+    text.replace(
+      /&[#\w]+;?=?/g,
+      (reference) =>
+        (cache[inAttribute + reference] ??= decodeReference(
+          reference,
+          inAttribute,
+        )),
+    );
+};
+
 function Parser(handler, options = {}) {
   const parser = this;
   parser.startIndex = 0;
   parser.endIndex = 0;
 
   parser.end = (input = "") => {
-    const { xmlMode } = options;
+    const { xmlMode, decodeEntities } = options;
     const lowerCaseTags = options.lowerCaseTags ?? !xmlMode;
     const lowerCaseAttributeNames = options.lowerCaseAttributeNames ?? !xmlMode;
+
+    const decode =
+      typeof decodeEntities == "function"
+        ? decodeEntities
+        : decodeEntities && (xmlMode ? decodeXML : createBrowserDecoder());
+    // Text is decoded unless it's raw, attribute values always
+    const decoded = (text, inAttribute) =>
+      decode &&
+      text.includes("&") &&
+      (inAttribute || !isRawText(stack.at(-1), xmlMode))
+        ? decode(text, inAttribute)
+        : text;
 
     const stack = [];
     // Numbers of open elements by name, so that end tags matching no open
@@ -132,7 +206,7 @@ function Parser(handler, options = {}) {
     const onText = (end) => {
       if (end > index) {
         setPosition(index, end - 1);
-        emit("ontext", input.slice(index, end));
+        emit("ontext", decoded(input.slice(index, end), false));
       }
     };
 
@@ -177,7 +251,10 @@ function Parser(handler, options = {}) {
           const [, , rawKey, doubleQuoted, singleQuoted, unquoted] = match;
           const key = lowerCase(rawKey, lowerCaseAttributeNames);
           if (!Object.hasOwn(attribs, key)) {
-            attribs[key] = doubleQuoted ?? singleQuoted ?? unquoted ?? "";
+            attribs[key] = decoded(
+              doubleQuoted ?? singleQuoted ?? unquoted ?? "",
+              true,
+            );
           }
         }
         // Unterminated tag at the end of the input, drop it
@@ -294,6 +371,12 @@ const parse = (markup, options = {}) => {
 
 // Uses a stack instead of recursion to support any nesting depth
 const serialize = (dom, options = {}) => {
+  // The characters to escape in text and in attribute values. Decoded text
+  // needs "&" escaped too, and, for XML, ">" in text ("]]>") and "<" in
+  // attribute values.
+  const [textChars, attributeChars] = options.decodeEntities
+    ? ["&<>", '&<"']
+    : ["<", '"'];
   let output = "";
   // Nodes and end tags to output, in reverse order, and the XML modes for
   // them (separate arrays to avoid allocations)
@@ -326,14 +409,9 @@ const serialize = (dom, options = {}) => {
 
       output += `<${name}`;
       for (const key in attribs) {
-        let value = attribs[key];
+        const value = attribs[key];
         output += ` ${key}`;
-        if (value || xml) {
-          // Checking first is much faster: most values have no quotes, and
-          // replaceAll is slow even when it finds nothing
-          if (value.includes('"')) value = value.replaceAll('"', "&quot;");
-          output += `="${value}"`;
-        }
+        if (value || xml) output += `="${escape(value, attributeChars)}"`;
       }
       if (xml && !children?.length) {
         output += options.spaceInSelfClosing ? " />" : "/>";
@@ -352,11 +430,13 @@ const serialize = (dom, options = {}) => {
     } else if (type == "cdata") {
       output += `<![CDATA[${children[0].data}]]>`;
     } else if (data) {
-      // See above about checking first
+      // Only text that needs escaping is checked for being raw. "foreign"
+      // output is HTML too.
+      const escaped = escape(data, textChars);
       output +=
-        UNENCODED_ELEMENTS.has(parent?.name) || !data.includes("<")
+        escaped != data && isRawText(parent?.name, options.xmlMode === true)
           ? data
-          : data.replaceAll("<", "&lt;");
+          : escaped;
     }
   }
 

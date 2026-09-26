@@ -201,6 +201,23 @@ export interface ParserOptions {
    * NOTE: If xmlMode is set to true then self-closing tags will always be recognized.
    */
   recognizeSelfClosing?: boolean;
+
+  /**
+   * Decode character references like `&amp;` in text and attribute values
+   * (not in comments, CDATA, and in HTML, not in the elements whose text is
+   * raw: <script>, <style>, <xmp>, <iframe>, <noembed>, <noframes>,
+   * <plaintext>, <noscript>).
+   *
+   * `true` in XML mode: the XML entities and numeric references.
+   *
+   * `true` in HTML mode: all of HTML's, decoded by the browser's own parser,
+   * so they come out exactly as the browser decodes them in the same markup.
+   * Throws where there's no DOM, e.g. in Node or workers.
+   *
+   * A function: decodes the given text, e.g. with the `entities` package:
+   * `(text, inAttribute) => inAttribute ? decodeHTMLAttribute(text) : decodeHTML(text)`.
+   */
+  decodeEntities?: boolean | ((text: string, inAttribute: boolean) => string);
 }
 
 export interface HandlerOptions {
@@ -212,4 +229,9 @@ export interface HandlerOptions {
 export interface SerializerOptions {
   xmlMode?: boolean | "foreign";
   spaceInSelfClosing?: boolean;
+  /**
+   * For a DOM parsed with `decodeEntities`: encode `&` as well, and `>` in
+   * text and `<` in attribute values (needed for XML).
+   */
+  decodeEntities?: boolean;
 }

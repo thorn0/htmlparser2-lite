@@ -314,6 +314,99 @@ describe("the end of the input", () => {
   });
 });
 
+describe("decodeEntities", () => {
+  const xml = { xmlMode: true, decodeEntities: true };
+  // For HTML mode without a DOM
+  const decodeAmp = (text) => text.replaceAll("&amp;", "&");
+
+  test("XML mode: XML entities and numeric references, only terminated ones", () => {
+    const [a] = parse(
+      '<a b="&quot;&#x41;&apos;">&lt;&amp;&#65;&#x1F600;&AMP;&amp &#0;&#xD800;&#1114112;</a>',
+      xml,
+    );
+    assert.deepEqual(a.attribs, { b: `"A'` });
+    assert.equal(a.children[0].data, "<&A😀&AMP;&amp ���");
+  });
+
+  test("HTML mode needs a DOM or a function", () => {
+    assert.throws(() => parse("a", { decodeEntities: true }), /needs a DOM/);
+  });
+
+  test("a function decodes text and attribute values", () => {
+    const calls = [];
+    const decode = (text, inAttribute) => {
+      calls.push([text, inAttribute]);
+      return text.toUpperCase();
+    };
+    const [p] = parse(
+      '<p a="&x" b="y">&t<!--&c--><![CDATA[&d]]><script>&s</script><style>&st</style><xmp>&xm</xmp>&u</p>',
+      { decodeEntities: decode, recognizeCDATA: true },
+    );
+    assert.deepEqual(calls, [
+      ["&x", true],
+      ["&t", false],
+      ["&u", false],
+    ]);
+    assert.deepEqual(p.attribs, { a: "&X", b: "y" });
+    assert.deepEqual(tree(p.children), [
+      ["text", "&T"],
+      ["comment", "&c"],
+      ["cdata", undefined, [["text", "&d"]]],
+      ["script", "script", [["text", "&s"]]],
+      ["style", "style", [["text", "&st"]]],
+      ["tag", "xmp", [["text", "&xm"]]],
+      ["text", "&U"],
+    ]);
+  });
+
+  test("serialize encodes & for decoded DOMs", () => {
+    const html = '<a b="&amp;lt;&quot;">&amp;lt; &lt;</a>';
+    const dom = parse(html, xml);
+    assert.equal(dom[0].children[0].data, "&lt; <");
+    assert.equal(serialize(dom, { decodeEntities: true }), html);
+  });
+
+  test("raw text isn't decoded or encoded, except in XML", () => {
+    const html = { decodeEntities: decodeAmp };
+    const serialized = { decodeEntities: true };
+    for (const markup of [
+      "<xmp>&amp;lt;</xmp>",
+      // Also inside foreign content, like when parsing
+      "<svg><style>&amp;</style></svg>",
+    ]) {
+      assert.equal(roundTrip(markup, html, serialized), markup);
+    }
+    // Element names are case-insensitive
+    const markup = "<SCRIPT>&amp;</SCRIPT>";
+    assert.equal(
+      roundTrip(markup, { ...html, lowerCaseTags: false }, serialized),
+      markup,
+    );
+    // "foreign" output is HTML too, and HTML is back after integration points
+    const foreign =
+      "<svg><foreignObject><script>&amp;</script></foreignObject></svg>";
+    assert.equal(
+      roundTrip(
+        foreign,
+        { ...html, lowerCaseTags: false },
+        { ...serialized, xmlMode: "foreign" },
+      ),
+      foreign,
+    );
+    assert.equal(
+      roundTrip("<script>&amp;lt;</script>", xml, xml),
+      "<script>&amp;lt;</script>",
+    );
+  });
+
+  test("serialize: decoded < in attributes and ]]> in text are encoded", () => {
+    assert.equal(
+      roundTrip('<a x="&lt;">]]&gt;</a>', xml, xml),
+      '<a x="&lt;">]]&gt;</a>',
+    );
+  });
+});
+
 describe("options", () => {
   test("lowerCaseTags", () => {
     assert.deepEqual(tree(parse("<DIV><Br></DIV>")), [

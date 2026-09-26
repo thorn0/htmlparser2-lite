@@ -3,6 +3,7 @@
   "browserslist": "baseline widely available with downstream",
   "devDependencies": {
     "acorn": "8.18.0",
+    "entities": "8.1.0",
     "htmlparser2-lite": "link:./dist",
     "prettier": "3.9.9",
     "typescript": "7.0.2",

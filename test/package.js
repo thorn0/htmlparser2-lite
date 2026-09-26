@@ -8,6 +8,9 @@ const vm = require("node:vm");
 
 const cjs = require("htmlparser2-lite");
 
+// For the fixtures with `decodeEntities: true`
+require("./fake-dom.cjs");
+
 // The inputs and options of the upstream fixtures
 const fixtures = ["htmlparser2/Events", "domhandler/cases"].flatMap((dir) =>
   fs

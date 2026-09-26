@@ -5,6 +5,9 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { Parser } = require("../dist/htmlparser2-lite");
 
+// For `decodeEntities: true` in HTML mode
+require("./fake-dom.cjs");
+
 const dir = path.join(__dirname, "fixtures/htmlparser2/Events");
 
 // Format: event name: number of arguments
@@ -42,10 +45,8 @@ const collectEvents = (html, options) => {
 describe("htmlparser2 events", () => {
   for (const file of fs.readdirSync(dir)) {
     const { name, options, html, expected } = require(path.join(dir, file));
-    const skip =
-      options.parser?.decodeEntities && "decodeEntities isn't supported";
 
-    test(`${file}: ${name}`, { skip }, () => {
+    test(`${file}: ${name}`, () => {
       assert.deepEqual(
         // Attributes objects must be compared as plain objects
         JSON.parse(JSON.stringify(collectEvents(html, options.parser))),

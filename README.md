@@ -4,7 +4,7 @@
 [![npm bundle size (minified)](https://img.shields.io/bundlephobia/min/htmlparser2-lite.svg)](https://unpkg.com/htmlparser2-lite)
 [![npm bundle size (minified + gzip)](https://img.shields.io/bundlephobia/minzip/htmlparser2-lite.svg)](https://bundlephobia.com/result?p=htmlparser2-lite)
 
-> [Fast & forgiving HTML/XML parser](https://github.com/fb55/htmlparser2) for the browser, < 7 KB minified (~3 KB gzipped), no dependencies
+> [Fast & forgiving HTML/XML parser](https://github.com/fb55/htmlparser2) for the browser, < 7 KB minified (3.4 KB gzipped), no dependencies
 
 A compact reimplementation of [`htmlparser2`](https://github.com/fb55/htmlparser2) 3.x and friends, compatible with them. It passes
 the [`htmlparser2`](https://github.com/fb55/htmlparser2/tree/v3.10.1/test/Events) and
@@ -29,6 +29,28 @@ Also works with `require("htmlparser2-lite")`, AMD, and as a `<script>` that def
 </script>
 ```
 
+## Decoding character references
+
+By default, character references like `&amp;` stay as they are. With the `decodeEntities` option, they're decoded in text and
+attribute values (not in comments, CDATA, and in HTML, not in the elements whose text is raw, like `<script>` and `<style>`):
+
+- In browsers, `decodeEntities: true` uses the browser's own parser, so no table of HTML's more than 2000 named references needs to be
+  bundled. They come out exactly as the browser decodes them in the same markup, quirks included (e.g. Chromium turns `&#x;` into `�`).
+- In XML mode, `decodeEntities: true` decodes the XML entities and numeric references, which works everywhere.
+- Where there's no DOM (Node, workers), pass a function, e.g. using the [`entities`](https://github.com/fb55/entities) package:
+
+  ```js
+  import { decodeHTML, decodeHTMLAttribute } from "entities";
+
+  const dom = parse(html, {
+    decodeEntities: (text, inAttribute) =>
+      inAttribute ? decodeHTMLAttribute(text) : decodeHTML(text),
+  });
+  ```
+
+To serialize a decoded DOM, pass `decodeEntities: true` to `serialize` as well, so that `&` (and for XML, `>` in text and `<` in
+attribute values) gets encoded.
+
 ## Includes:
 
 - `Parser`: [`htmlparser2`](https://github.com/fb55/htmlparser2) 3.x's parser with the same events, options and parsing rules,
@@ -42,7 +64,6 @@ Also works with `require("htmlparser2-lite")`, AMD, and as a `<script>` that def
 
 ## Excludes:
 
-- The [`decodeEntities`](https://github.com/fb55/htmlparser2/wiki/Parser-options#option-decodeentities) option
 - Streaming: the whole input is passed to `Parser#end`. There are no `write`, `parseComplete`, `reset`, `pause`, `resume` methods and no
   events useful only for streaming: `onopentagname`, `onattribute` (use `onopentag`), `oncommentend`, `onreset`, `onparserinit`,
   `onerror`
