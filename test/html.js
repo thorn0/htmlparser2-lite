@@ -478,7 +478,7 @@ describe("Parser", () => {
   });
 });
 
-describe("no quadratic worst cases", () => {
+describe("linear time", () => {
   // Quadratic implementations take many seconds for these
   const fast = (name, f) =>
     test(name, () => {

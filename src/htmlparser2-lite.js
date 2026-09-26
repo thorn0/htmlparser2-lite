@@ -1,4 +1,3 @@
-// Sets are faster than regexes for these lookups
 const words = (str) => new Set(str.split(" "));
 
 const VOID_ELEMENTS = words(
@@ -59,11 +58,11 @@ function Parser(handler, options = {}) {
     const lowerCaseAttributeNames = options.lowerCaseAttributeNames ?? !xmlMode;
 
     const stack = [];
-    // Numbers of open elements by name, to avoid searching the stack in vain
+    // Numbers of open elements by name, so that end tags matching no open
+    // element don't search the stack
     const openCounts = { __proto__: null };
     const foreignContext = [];
 
-    // Callbacks get exactly the arguments of the event
     const emit = (name, ...args) => handler?.[name]?.(...args);
 
     const setPosition = (start, end) => {
@@ -117,7 +116,8 @@ function Parser(handler, options = {}) {
         prefix + value,
       );
 
-    // Stateful (lastIndex), so created per call for reentrancy
+    // Created per call because they keep state in lastIndex, and a callback
+    // can start another parse
     const TOKEN = htmlRegExp(
       /<(?:\/[\s]*([^\s>]+)[^>]*>?|!--(.*?)(?:-->|$)|!\[CDATA\[(.*?)(?:]]>|$)|!(.[^>]*)>?|\?([^>]*)>?|([^\s/<>!?][^\s/>]*))/gis,
     );
@@ -195,7 +195,8 @@ function Parser(handler, options = {}) {
 
         // Only whitespace and slashes can be before ">", so if there is a
         // slash, it's the last non-whitespace character. The foreign context
-        // is checked after onOpenTag has updated it for this element.
+        // of the element itself applies (`<svg/>` is self-closing), hence
+        // this check comes after onOpenTag.
         const [, beforeEnd] = match;
         if (
           beforeEnd.includes("/") &&
@@ -263,8 +264,8 @@ const parse = (markup, options = {}) => {
       ontext(data) {
         const node = (openElements.at(-1)?.children ?? dom).at(-1);
         const append = node?.type == "text";
-        // Appending must not renormalize or even read the existing text,
-        // which would make it quadratic
+        // Only the new text is normalized, and the existing text isn't even
+        // read, so that appending many pieces takes linear time
         if (options.normalizeWhitespace) {
           data = data.replace(/\s+/g, " ");
           if (append && endsWithSpace && data[0] == " ") data = data.slice(1);
@@ -291,7 +292,7 @@ const parse = (markup, options = {}) => {
   return dom;
 };
 
-// Not recursive, so it works for any depth
+// Uses a stack instead of recursion to support any nesting depth
 const serialize = (dom, options = {}) => {
   let output = "";
   // Nodes and end tags to output, in reverse order, and the XML modes for

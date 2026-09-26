@@ -103,8 +103,9 @@ export function create(
 export function isTag(node: DomNode): node is DomTagNode;
 
 /**
- * To remove many nodes, pass them in one call, that's linear in the total
- * number of the siblings, unlike removing them one by one.
+ * Removes the nodes from their parents and from `dom`. The removed nodes keep
+ * their own `parent`, `prev` and `next`. To remove many nodes, pass them all
+ * in one call: that's much faster than calling `remove` for each of them.
  * @param nodes Nodes to remove
  * @param dom Array of top-level nodes, e.g. returned from `parse`.
  * Ignored if `number`, so `forEach` can be used: `nodes.forEach(remove)`
@@ -128,10 +129,9 @@ export function append(node: DomNode, next: DomNode): void;
 export function prepend(node: DomNode, prev: DomNode): void;
 
 /**
- * Finds nodes of all types (unlike `findAll`), depth-first. It's `filter`
- * from `domutils`, renamed so that linters don't mistake it for
- * `Array#filter`, and without the `recurse` parameter (use `Array#filter`
- * instead of `recurse: false`).
+ * Finds the nodes, of any type, that pass the test among the given nodes and
+ * their descendants, in document order. Unlike `findAll`, finds text nodes,
+ * comments, etc. too.
  * @param [limit=Infinity] Stop after finding this many nodes
  */
 export function filterNodes(
@@ -141,8 +141,9 @@ export function filterNodes(
 ): DomNode[];
 
 /**
- * Searches only for tags, ignores text nodes, etc.
- * Non-recursive, depth-first.
+ * Finds the first tag that passes the test among the given nodes and their
+ * descendants, in document order. Text nodes, comments, etc. are skipped.
+ * @param test Tag name or predicate function
  */
 export function findOne(
   test: ((el: DomTagNode) => boolean) | string,
@@ -150,8 +151,8 @@ export function findOne(
 ): DomTagNode | null;
 
 /**
- * Searches only for tags, ignores text nodes, etc.
- * Non-recursive, depth-first.
+ * Finds the tags that pass the test among the given nodes and their
+ * descendants, in document order. Text nodes, comments, etc. are skipped.
  * @param test Tag name or predicate function
  */
 export function findAll(

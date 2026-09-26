@@ -54,18 +54,23 @@ Also works with `require("htmlparser2-lite")`, AMD, and as a `<script>` that def
 
 ## Differences from `htmlparser2` 3.x:
 
-- Unterminated markup at the end of the input: start tags, end tags, declarations and processing instructions are dropped, comments and
-  CDATA sections are kept (even empty ones)
-- `startIndex` and `endIndex` are correct for all nodes. An element closed implicitly by a start tag ends right before it.
-- `</script` followed by whitespace or `>` always ends a script, same for `</style`
-- `<!->` is a declaration that ends at this `>`
-- Text isn't split into multiple `ontext` events
+- At the end of the input, an unterminated comment or CDATA section is kept, and any other unterminated markup is dropped. htmlparser2
+  handles these cases inconsistently, e.g. it drops `<!--`, but turns `<!doctype` into the text `doctype`.
+- `startIndex` and `endIndex` are the exact range of each node's markup, and an element closed implicitly by a start tag ends right before
+  that tag. In htmlparser2, the ranges are off in some cases, e.g. for directives.
+- A script ends at the first `</script` followed by whitespace or `>`, a style at the first such `</style`. htmlparser2 misses it in some
+  cases, e.g. in `</s</script>`.
+- `<!->` is a declaration ending at its `>`. In htmlparser2, it continues to the next `>`.
+- Text between two tags comes in one `ontext` event. htmlparser2 can split it, e.g. at a `<` that doesn't start a tag.
 
 ## Performance
 
-On real-world pages, parsing is about 1.3× (building a DOM) to 1.4× (events only) as fast as with `htmlparser2-20kb`, and serializing
-about 1.2×. Nothing is quadratic in the worst case: e.g. many unmatched end tags, `normalizeWhitespace`, removing or moving many nodes.
-`serialize` works for any nesting depth. To remove many nodes, pass them all to `remove` at once.
+On real-world pages, it parses about 1.3× (building a DOM) to 1.4× (events only) as fast as its predecessor, `htmlparser2-20kb`, and
+serializes about 1.2× as fast.
+
+Time grows linearly with the size of the input for any markup, so even malicious HTML can't make parsing hang, and elements can be nested
+arbitrarily deep. The same goes for `remove` and `create` when they get many nodes at once, so pass all the nodes to remove in one call
+rather than removing them one by one.
 
 ## Browser support
 
@@ -83,12 +88,12 @@ The code is ES2022, it targets [Baseline](https://web.dev/baseline) Widely avail
   `parser.end(html)`. Handle attributes in `onopentag` instead of `onattribute`.
 - See the differences listed above
 
-## Compare:
+## Size comparison
 
-https://bundlephobia.com/result?p=htmlparser2
+The current `htmlparser2` on Bundlephobia: https://bundlephobia.com/result?p=htmlparser2
 
 ## Development
 
 - `yarn build`: builds `dist/htmlparser2-lite.js` (UMD) and `dist/htmlparser2-lite.mjs` (ES module) from `src/htmlparser2-lite.js`,
   runs the tests and checks the types
-- `yarn test`: runs the tests against the built file
+- `yarn test`: runs the tests against the built files
