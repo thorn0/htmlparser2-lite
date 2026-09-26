@@ -2,6 +2,8 @@
   "compilerOptions": {
     "noEmit": true,
     "strict": true,
-    "paths": { "htmlparser2-lite": ["./../dist/htmlparser2-lite.d.ts"] }
+    "module": "nodenext",
+    // So that global.ts is a script, not a module
+    "moduleDetection": "auto"
   }
 }

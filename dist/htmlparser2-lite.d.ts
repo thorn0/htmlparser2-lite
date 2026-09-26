@@ -1,217 +1,214 @@
 export as namespace htmlparser;
-export = htmlparser;
 
-declare namespace htmlparser {
-  interface BaseDomNode {
-    parent?: DomNode | null;
-    next?: DomNode | null;
-    prev?: DomNode | null;
-    startIndex?: number;
-    endIndex?: number;
-  }
+export interface BaseDomNode {
+  parent?: DomNode | null;
+  next?: DomNode | null;
+  prev?: DomNode | null;
+  startIndex?: number;
+  endIndex?: number;
+}
 
-  type DomNode =
-    DomTextNode | DomDirectiveNode | DomCommentNode | DomTagNode | DomCdataNode;
+export type DomNode =
+  DomTextNode | DomDirectiveNode | DomCommentNode | DomTagNode | DomCdataNode;
 
-  type Dom = DomNode[];
+export type Dom = DomNode[];
 
-  interface DomTextNode extends BaseDomNode {
-    type: "text";
-    data: string;
-    name?: undefined;
-    attribs?: undefined;
-    children?: undefined;
-  }
+export interface DomTextNode extends BaseDomNode {
+  type: "text";
+  data: string;
+  name?: undefined;
+  attribs?: undefined;
+  children?: undefined;
+}
 
-  interface DomDirectiveNode extends BaseDomNode {
-    type: "directive";
-    data: string;
-    // Actually, `name` is `string`, but this breaks type guards like `if (el.name === 'p') ...`.
-    name?: undefined;
-    attribs?: undefined;
-    children?: undefined;
-  }
+export interface DomDirectiveNode extends BaseDomNode {
+  type: "directive";
+  data: string;
+  // Actually, `name` is `string`, but this breaks type guards like `if (el.name === 'p') ...`.
+  name?: undefined;
+  attribs?: undefined;
+  children?: undefined;
+}
 
-  interface DomCommentNode extends BaseDomNode {
-    type: "comment";
-    data: string;
-    name?: undefined;
-    attribs?: undefined;
-    children?: undefined;
-  }
+export interface DomCommentNode extends BaseDomNode {
+  type: "comment";
+  data: string;
+  name?: undefined;
+  attribs?: undefined;
+  children?: undefined;
+}
 
-  interface DomTagNode extends BaseDomNode {
-    type: "tag" | "script" | "style";
-    data?: undefined;
-    name: string;
-    attribs: { [name: string]: string };
-    children: DomNode[];
-  }
+export interface DomTagNode extends BaseDomNode {
+  type: "tag" | "script" | "style";
+  data?: undefined;
+  name: string;
+  attribs: { [name: string]: string };
+  children: DomNode[];
+}
 
-  interface DomCdataNode extends BaseDomNode {
-    type: "cdata";
-    data?: undefined;
-    name?: undefined;
-    attribs?: undefined;
-    // Specifying `DomTextNode[]` is not practical because of https://github.com/microsoft/TypeScript/issues/35045
-    children: DomNode[];
-  }
+export interface DomCdataNode extends BaseDomNode {
+  type: "cdata";
+  data?: undefined;
+  name?: undefined;
+  attribs?: undefined;
+  // Specifying `DomTextNode[]` is not practical because of https://github.com/microsoft/TypeScript/issues/35045
+  children: DomNode[];
+}
 
-  class Parser {
-    constructor(handler: Handler, options?: ParserOptions);
+export class Parser {
+  constructor(handler: Handler, options?: ParserOptions);
 
-    /** Start index of the markup that triggered the current callback. */
-    startIndex: number;
+  /** Start index of the markup that triggered the current callback. */
+  startIndex: number;
 
-    /** End index (inclusive) of the markup that triggered the current callback. */
-    endIndex: number;
-
-    /**
-     * Parses the input, calling the callbacks, `onend` last. Each call parses
-     * its input separately.
-     */
-    end(input: string): void;
-  }
-
-  function parse(
-    markup: string,
-    options?: ParserOptions & HandlerOptions,
-  ): DomNode[];
-
-  function serialize(
-    dom: DomNode | DomNode[],
-    options?: SerializerOptions,
-  ): string;
-
-  type CreateArgument =
-    | DomNode
-    | string
-    | { [name: string]: string }
-    | null
-    | undefined
-    | CreateArgument[];
+  /** End index (inclusive) of the markup that triggered the current callback. */
+  endIndex: number;
 
   /**
-   * Creates an element. Strings become text nodes, nodes are moved from where
-   * they are, other objects are attributes, arrays are flattened.
-   * @param tagName Can contain CSS classes: `div.foo.bar`, `.foo` (a div)
+   * Parses the input, calling the callbacks, `onend` last. Each call parses
+   * its input separately.
    */
-  function create(
-    tagName: string,
-    ...childrenOrAttribs: CreateArgument[]
-  ): DomTagNode;
+  end(input: string): void;
+}
 
-  /** Tests whether a node is a tag (`tag`, `script` or `style`). */
-  function isTag(node: DomNode): node is DomTagNode;
+export function parse(
+  markup: string,
+  options?: ParserOptions & HandlerOptions,
+): DomNode[];
 
-  /**
-   * To remove many nodes, pass them in one call, that's linear in the total
-   * number of the siblings, unlike removing them one by one.
-   * @param nodes Nodes to remove
-   * @param dom Array of top-level nodes, e.g. returned from `parse`.
-   * Ignored if `number`, so `forEach` can be used: `nodes.forEach(remove)`
+export function serialize(
+  dom: DomNode | DomNode[],
+  options?: SerializerOptions,
+): string;
+
+export type CreateArgument =
+  | DomNode
+  | string
+  | { [name: string]: string }
+  | null
+  | undefined
+  | CreateArgument[];
+
+/**
+ * Creates an element. Strings become text nodes, nodes are moved from where
+ * they are, other objects are attributes, arrays are flattened.
+ * @param tagName Can contain CSS classes: `div.foo.bar`, `.foo` (a div)
+ */
+export function create(
+  tagName: string,
+  ...childrenOrAttribs: CreateArgument[]
+): DomTagNode;
+
+/** Tests whether a node is a tag (`tag`, `script` or `style`). */
+export function isTag(node: DomNode): node is DomTagNode;
+
+/**
+ * To remove many nodes, pass them in one call, that's linear in the total
+ * number of the siblings, unlike removing them one by one.
+ * @param nodes Nodes to remove
+ * @param dom Array of top-level nodes, e.g. returned from `parse`.
+ * Ignored if `number`, so `forEach` can be used: `nodes.forEach(remove)`
+ */
+export function remove(nodes: DomNode | DomNode[], dom?: Dom | number): void;
+
+/**
+ * Note that if `replacement` is part of the DOM, it should be removed first
+ * (e.g. using `remove`) for proper cleanup.
+ */
+export function replace(node: DomNode, replacement: DomNode, dom?: Dom): void;
+
+export function appendChild(tag: DomTagNode, child: DomNode, dom?: Dom): void;
+
+export function prependChild(tag: DomTagNode, child: DomNode, dom?: Dom): void;
+
+/** Insert `next` after `node`. */
+export function append(node: DomNode, next: DomNode): void;
+
+/** Insert `prev` before `node`. */
+export function prepend(node: DomNode, prev: DomNode): void;
+
+/**
+ * Finds nodes of all types (unlike `findAll`), depth-first. It's `filter`
+ * from `domutils`, renamed so that linters don't mistake it for
+ * `Array#filter`, and without the `recurse` parameter (use `Array#filter`
+ * instead of `recurse: false`).
+ * @param [limit=Infinity] Stop after finding this many nodes
+ */
+export function filterNodes(
+  test: (node: DomNode) => boolean,
+  nodes: DomNode | DomNode[],
+  limit?: number,
+): DomNode[];
+
+/**
+ * Searches only for tags, ignores text nodes, etc.
+ * Non-recursive, depth-first.
+ */
+export function findOne(
+  test: ((el: DomTagNode) => boolean) | string,
+  nodes: DomNode[],
+): DomTagNode | null;
+
+/**
+ * Searches only for tags, ignores text nodes, etc.
+ * Non-recursive, depth-first.
+ * @param test Tag name or predicate function
+ */
+export function findAll(
+  test: ((el: DomTagNode) => boolean) | string,
+  nodes: DomNode[],
+): DomTagNode[];
+
+export interface Handler {
+  onopentag?: (name: string, attribs: { [type: string]: string }) => void;
+  ontext?: (text: string) => void;
+  onclosetag?: (text: string) => void;
+  onprocessinginstruction?: (name: string, data: string) => void;
+  oncomment?: (data: string) => void;
+  oncdatastart?: () => void;
+  oncdataend?: () => void;
+  onend?: () => void;
+}
+
+export interface ParserOptions {
+  /***
+   * Disables HTML-specific behavior: the content of special tags (<script> and <style>)
+   * is no longer text only, "empty" tags (e.g. <br>) can have children, no tags are
+   * closed implicitly, self-closing tags are recognized. For feeds and other XML content
+   * (documents that don't consist of HTML), set this to true. Default: false.
    */
-  function remove(nodes: DomNode | DomNode[], dom?: Dom | number): void;
+  xmlMode?: boolean;
 
-  /**
-   * Note that if `replacement` is part of the DOM, it should be removed first
-   * (e.g. using `remove`) for proper cleanup.
+  /***
+   * If set to true, all tags will be lower-cased. If xmlMode is disabled, this defaults to true.
    */
-  function replace(node: DomNode, replacement: DomNode, dom?: Dom): void;
+  lowerCaseTags?: boolean;
 
-  function appendChild(tag: DomTagNode, child: DomNode, dom?: Dom): void;
-
-  function prependChild(tag: DomTagNode, child: DomNode, dom?: Dom): void;
-
-  /** Insert `next` after `node`. */
-  function append(node: DomNode, next: DomNode): void;
-
-  /** Insert `prev` before `node`. */
-  function prepend(node: DomNode, prev: DomNode): void;
-
-  /**
-   * Finds nodes of all types (unlike `findAll`), depth-first. It's `filter`
-   * from `domutils`, renamed so that linters don't mistake it for
-   * `Array#filter`, and without the `recurse` parameter (use `Array#filter`
-   * instead of `recurse: false`).
-   * @param [limit=Infinity] Stop after finding this many nodes
+  /***
+   * If set to true, all attribute names will be lower-cased. If xmlMode is disabled, this defaults to true.
    */
-  function filterNodes(
-    test: (node: DomNode) => boolean,
-    nodes: DomNode | DomNode[],
-    limit?: number,
-  ): DomNode[];
+  lowerCaseAttributeNames?: boolean;
 
-  /**
-   * Searches only for tags, ignores text nodes, etc.
-   * Non-recursive, depth-first.
+  /***
+   * If set to true, CDATA sections will be recognized as text even if the xmlMode option is not enabled.
+   * NOTE: If xmlMode is set to true then CDATA sections will always be recognized as text.
    */
-  function findOne(
-    test: ((el: DomTagNode) => boolean) | string,
-    nodes: DomNode[],
-  ): DomTagNode | null;
+  recognizeCDATA?: boolean;
 
-  /**
-   * Searches only for tags, ignores text nodes, etc.
-   * Non-recursive, depth-first.
-   * @param test Tag name or predicate function
+  /***
+   * If set to true, self-closing tags will trigger the onclosetag event even if xmlMode is not set to true.
+   * NOTE: If xmlMode is set to true then self-closing tags will always be recognized.
    */
-  function findAll(
-    test: ((el: DomTagNode) => boolean) | string,
-    nodes: DomNode[],
-  ): DomTagNode[];
+  recognizeSelfClosing?: boolean;
+}
 
-  interface Handler {
-    onopentag?: (name: string, attribs: { [type: string]: string }) => void;
-    ontext?: (text: string) => void;
-    onclosetag?: (text: string) => void;
-    onprocessinginstruction?: (name: string, data: string) => void;
-    oncomment?: (data: string) => void;
-    oncdatastart?: () => void;
-    oncdataend?: () => void;
-    onend?: () => void;
-  }
+export interface HandlerOptions {
+  normalizeWhitespace?: boolean;
+  withStartIndices?: boolean;
+  withEndIndices?: boolean;
+}
 
-  interface ParserOptions {
-    /***
-     * Disables HTML-specific behavior: the content of special tags (<script> and <style>)
-     * is no longer text only, "empty" tags (e.g. <br>) can have children, no tags are
-     * closed implicitly, self-closing tags are recognized. For feeds and other XML content
-     * (documents that don't consist of HTML), set this to true. Default: false.
-     */
-    xmlMode?: boolean;
-
-    /***
-     * If set to true, all tags will be lower-cased. If xmlMode is disabled, this defaults to true.
-     */
-    lowerCaseTags?: boolean;
-
-    /***
-     * If set to true, all attribute names will be lower-cased. If xmlMode is disabled, this defaults to true.
-     */
-    lowerCaseAttributeNames?: boolean;
-
-    /***
-     * If set to true, CDATA sections will be recognized as text even if the xmlMode option is not enabled.
-     * NOTE: If xmlMode is set to true then CDATA sections will always be recognized as text.
-     */
-    recognizeCDATA?: boolean;
-
-    /***
-     * If set to true, self-closing tags will trigger the onclosetag event even if xmlMode is not set to true.
-     * NOTE: If xmlMode is set to true then self-closing tags will always be recognized.
-     */
-    recognizeSelfClosing?: boolean;
-  }
-
-  interface HandlerOptions {
-    normalizeWhitespace?: boolean;
-    withStartIndices?: boolean;
-    withEndIndices?: boolean;
-  }
-
-  interface SerializerOptions {
-    xmlMode?: boolean | "foreign";
-    spaceInSelfClosing?: boolean;
-  }
+export interface SerializerOptions {
+  xmlMode?: boolean | "foreign";
+  spaceInSelfClosing?: boolean;
 }

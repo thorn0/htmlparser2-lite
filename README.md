@@ -10,6 +10,25 @@ A compact reimplementation of [`htmlparser2`](https://github.com/fb55/htmlparser
 the [`htmlparser2`](https://github.com/fb55/htmlparser2/tree/v3.10.1/test/Events) and
 [`domhandler`](https://github.com/fb55/domhandler/tree/v2.4.2/test/cases) test suites (except for the unsupported features listed below).
 
+## Usage
+
+```js
+import { parse, serialize, findAll } from "htmlparser2-lite";
+
+const dom = parse('<p>Hello <a href="/x">world</a>');
+for (const link of findAll("a", dom)) link.attribs.target = "_blank";
+serialize(dom); // '<p>Hello <a href="/x" target="_blank">world</a></p>'
+```
+
+Also works with `require("htmlparser2-lite")`, AMD, and as a `<script>` that defines the `htmlparser` global:
+
+```html
+<script src="https://unpkg.com/htmlparser2-lite"></script>
+<script>
+  const dom = htmlparser.parse("<p>Hello</p>");
+</script>
+```
+
 ## Includes:
 
 - `Parser`: [`htmlparser2`](https://github.com/fb55/htmlparser2) 3.x's parser with the same events, options and parsing rules,
@@ -70,5 +89,6 @@ https://bundlephobia.com/result?p=htmlparser2
 
 ## Development
 
-- `yarn build`: builds `dist/htmlparser2-lite.js`, runs the tests and checks the types
+- `yarn build`: builds `dist/htmlparser2-lite.js` (UMD) and `dist/htmlparser2-lite.mjs` (ES module) from `src/htmlparser2-lite.js`,
+  runs the tests and checks the types
 - `yarn test`: runs the tests against the built file

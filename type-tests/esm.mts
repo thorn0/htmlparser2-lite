@@ -1,4 +1,9 @@
 import * as htmlparser from "htmlparser2-lite";
+import { parse, type DomNode } from "htmlparser2-lite";
+
+const nodes: DomNode[] = parse("<p>");
+console.log(nodes);
+
 const dom = htmlparser.parse("<b>1</b><p><b>2</b>");
 const x = dom[0];
 if (x.attribs) {

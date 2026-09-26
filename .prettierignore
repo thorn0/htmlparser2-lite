@@ -1,4 +1,6 @@
 /dist/htmlparser2-lite.js
+/dist/htmlparser2-lite.mjs
+/dist/htmlparser2-lite.d.mts
 /dist/README.md
 /test/fixtures
 /tmp

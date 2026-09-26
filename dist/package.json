@@ -20,5 +20,18 @@
     "dom"
   ],
   "main": "./htmlparser2-lite.js",
-  "types": "./htmlparser2-lite.d.ts"
+  "types": "./htmlparser2-lite.d.ts",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./htmlparser2-lite.d.mts",
+        "default": "./htmlparser2-lite.mjs"
+      },
+      "require": {
+        "types": "./htmlparser2-lite.d.ts",
+        "default": "./htmlparser2-lite.js"
+      }
+    },
+    "./package.json": "./package.json"
+  }
 }
