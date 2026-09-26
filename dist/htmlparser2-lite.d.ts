@@ -207,7 +207,7 @@ export interface ParserOptions {
   /**
    * In HTML too, close elements written as self-closing (`<x/>`). Always on in
    * XML, and in HTML inside <svg> and <math> (but not inside elements like
-   * <desc> or <mi>, which contain HTML).
+   * <foreignObject>, which contain HTML).
    *
    * Default: `false`
    */
@@ -268,7 +268,7 @@ export interface SerializerOptions {
    *
    * `"foreign"`: output HTML as inside <svg> or <math>: elements without
    * children self-close and attributes always get values, except inside
-   * elements like <desc> or <mi>, which contain HTML.
+   * elements like <foreignObject>, which contain HTML.
    *
    * `false`: output HTML, switching to `"foreign"` inside <svg> and <math>.
    *

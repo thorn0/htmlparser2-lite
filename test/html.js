@@ -142,6 +142,27 @@ describe("void and self-closing elements", () => {
     );
   });
 
+  test("HTML inside <foreignObject>, whatever the case of the name", () => {
+    assert.deepEqual(
+      tree(parse("<svg><foreignObject><div/>x</foreignObject><g/>y</svg>")),
+      [
+        [
+          "tag",
+          "svg",
+          [
+            ["tag", "foreignobject", [["tag", "div", [["text", "x"]]]]],
+            ["tag", "g", []],
+            ["text", "y"],
+          ],
+        ],
+      ],
+    );
+    assert.equal(
+      roundTrip('<svg><foreignObject><b c=""></b></foreignObject></svg>'),
+      "<svg><foreignobject><b c></b></foreignobject></svg>",
+    );
+  });
+
   test("the foreign context of the self-closing element itself counts", () => {
     assert.deepEqual(tree(parse("<svg/><p>x")), [
       ["tag", "svg", []],

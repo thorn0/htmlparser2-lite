@@ -3,10 +3,14 @@ const words = (str) => new Set(str.split(" "));
 const VOID_ELEMENTS = words(
   "area base basefont br col command embed frame hr img input isindex keygen link meta param source track wbr",
 );
-const FOREIGN_ELEMENTS = words("svg math");
-const INTEGRATION_POINTS = words(
-  "mi mo mn ms mtext annotation-xml foreignObject desc title",
+// true for elements whose content is SVG or MathML (the first two), false for
+// elements in those whose content is HTML. Names are compared lowercased.
+const FOREIGN_CONTEXTS = new Map(
+  "svg math mi mo mn ms mtext annotation-xml foreignobject desc title"
+    .split(" ")
+    .map((name, i) => [name, i < 2]),
 );
+const foreignContextOf = (name) => FOREIGN_CONTEXTS.get(name?.toLowerCase());
 const SPECIAL_ELEMENTS = words("script style");
 const TAG_TYPES = words("tag script style");
 
@@ -158,8 +162,8 @@ function Parser(handler, options = {}) {
     const onOpenTag = (name, attribs) => {
       if (xmlMode || !VOID_ELEMENTS.has(name)) {
         push(name);
-        if (FOREIGN_ELEMENTS.has(name)) foreignContext.push(true);
-        else if (INTEGRATION_POINTS.has(name)) foreignContext.push(false);
+        const context = foreignContextOf(name);
+        if (context != null) foreignContext.push(context);
       }
       emit("onopentag", name, attribs);
       if (!xmlMode && VOID_ELEMENTS.has(name)) emit("onclosetag", name);
@@ -171,9 +175,7 @@ function Parser(handler, options = {}) {
 
     const onCloseTag = (name) => {
       name = lowerCase(name, lowerCaseTags);
-      if (FOREIGN_ELEMENTS.has(name) || INTEGRATION_POINTS.has(name)) {
-        foreignContext.pop();
-      }
+      if (foreignContextOf(name) != null) foreignContext.pop();
       const index = openCounts[name] ? stack.lastIndexOf(name) : -1;
       if (index >= 0) {
         while (stack.length > index) pop();
@@ -402,10 +404,10 @@ const serialize = (dom, options = {}) => {
 
     if (isTag(node)) {
       let xml =
-        xmlMode == "foreign" && INTEGRATION_POINTS.has(parent?.name)
+        xmlMode == "foreign" && foreignContextOf(parent?.name) === false
           ? false
           : xmlMode;
-      if (!xml && FOREIGN_ELEMENTS.has(name)) xml = "foreign";
+      if (!xml && foreignContextOf(name)) xml = "foreign";
 
       output += `<${name}`;
       for (const key in attribs) {

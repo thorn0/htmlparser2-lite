@@ -114,6 +114,8 @@ attribute values) gets encoded.
   cases, e.g. in `</s</script>`.
 - `<!->` is a declaration ending at its `>`. In htmlparser2, it continues to the next `>`.
 - Text between two tags comes in one `ontext` event. htmlparser2 can split it, e.g. at a `<` that doesn't start a tag.
+- The content of `<foreignObject>` in SVG is HTML (e.g. `/>` doesn't close elements there) whatever the case of the tag name. In
+  htmlparser2 (and dom-serializer), that's only with `lowerCaseTags: false`, because it compares the name case-sensitively.
 
 ## Performance
 
