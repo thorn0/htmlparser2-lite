@@ -68,3 +68,4 @@ fs.writeFileSync(
 );
 
 fs.copyFileSync("README.md", "dist/README.md");
+fs.copyFileSync("LICENSE", "dist/LICENSE");

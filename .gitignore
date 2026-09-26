@@ -3,5 +3,6 @@
 /dist/htmlparser2-lite.mjs
 /dist/htmlparser2-lite.d.mts
 /dist/README.md
+/dist/LICENSE
 /.vscode
 /tmp
