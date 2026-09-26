@@ -1,7 +1,7 @@
 {
-  "name": "htmlparser2-20kb",
-  "description": "Fast & forgiving HTML/XML parser bundled for the browser, < 20 KB, no dependencies",
-  "version": "3.10.15",
+  "name": "htmlparser2-lite",
+  "description": "Fast & forgiving HTML/XML parser for the browser, < 7 KB minified, no dependencies, htmlparser2-compatible",
+  "version": "1.0.0",
   "contributors": [
     "Felix Boehm <me@feedic.com>",
     "Georgii Dolzhykov <georgii.dolzhykov@gmail.com>"
@@ -9,15 +9,16 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/thorn0/htmlparser2-20kb.git"
+    "url": "git+https://github.com/thorn0/htmlparser2-lite.git"
   },
   "keywords": [
     "html",
     "htmlparser",
+    "htmlparser2",
     "markup",
     "xml",
     "dom"
   ],
-  "main": "./htmlparser2-20kb.js",
-  "types": "./htmlparser2-20kb.d.ts"
+  "main": "./htmlparser2-lite.js",
+  "types": "./htmlparser2-lite.d.ts"
 }
