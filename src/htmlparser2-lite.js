@@ -63,7 +63,8 @@ function Parser(handler, options = {}) {
     const openCounts = { __proto__: null };
     const foreignContext = [];
 
-    const emit = (name, a, b) => handler?.[name]?.(a, b);
+    // Callbacks get exactly the arguments of the event
+    const emit = (name, ...args) => handler?.[name]?.(...args);
 
     const setPosition = (start, end) => {
       parser.startIndex = start;
@@ -91,8 +92,7 @@ function Parser(handler, options = {}) {
       if (!xmlMode && VOID_ELEMENTS.has(name)) emit("onclosetag", name);
     };
 
-    const onSelfClosingTag = (name, attribs) => {
-      onOpenTag(name, attribs);
+    const closeCurrentTag = (name) => {
       if (stack.at(-1) === name) pop();
     };
 
@@ -105,7 +105,8 @@ function Parser(handler, options = {}) {
       if (index >= 0) {
         while (stack.length > index) pop();
       } else if (!xmlMode && (name == "p" || name == "br")) {
-        onSelfClosingTag(name, {});
+        onOpenTag(name, {});
+        closeCurrentTag(name);
       }
     };
 
@@ -152,7 +153,10 @@ function Parser(handler, options = {}) {
       } else if (cdata != null) {
         if (xmlMode || options.recognizeCDATA) {
           emit("oncdatastart");
+          // The text is after "<![CDATA["
+          setPosition(start + 9, start + 8 + cdata.length);
           emit("ontext", cdata);
+          setPosition(start, index - 1);
           emit("oncdataend");
         } else {
           emit("oncomment", `[CDATA[${cdata}]]`);
@@ -187,16 +191,17 @@ function Parser(handler, options = {}) {
         }
         setPosition(start, index - 1);
 
+        onOpenTag(name, attribs);
+
         // Only whitespace and slashes can be before ">", so if there is a
-        // slash, it's the last non-whitespace character
+        // slash, it's the last non-whitespace character. The foreign context
+        // is checked after onOpenTag has updated it for this element.
         const [, beforeEnd] = match;
         if (
           beforeEnd.includes("/") &&
           (xmlMode || options.recognizeSelfClosing || foreignContext.at(-1))
         ) {
-          onSelfClosingTag(name, attribs);
-        } else {
-          onOpenTag(name, attribs);
+          closeCurrentTag(name);
         }
 
         // The content of <script> and <style> is text
@@ -210,6 +215,8 @@ function Parser(handler, options = {}) {
       }
     }
 
+    // Elements still open end at the end of the input
+    setPosition(input.length, input.length - 1);
     while (stack.length) pop();
     emit("onend");
   };

@@ -142,6 +142,22 @@ describe("void and self-closing elements", () => {
     );
   });
 
+  test("the foreign context of the self-closing element itself counts", () => {
+    assert.deepEqual(tree(parse("<svg/><p>x")), [
+      ["tag", "svg", []],
+      ["tag", "p", [["text", "x"]]],
+    ]);
+    assert.deepEqual(tree(parse("<svg><title/><b/>x</svg>")), [
+      ["tag", "svg", [["tag", "title", [["tag", "b", [["text", "x"]]]]]]],
+    ]);
+    // Like in htmlparser2, the foreign context of a self-closed <svg/> stays
+    assert.deepEqual(tree(parse("<svg/><p/>x")), [
+      ["tag", "svg", []],
+      ["tag", "p", []],
+      ["text", "x"],
+    ]);
+  });
+
   test("XML mode", () => {
     assert.equal(
       roundTrip("<a/><br>x</br><b / >", { xmlMode: true }, { xmlMode: true }),
@@ -322,6 +338,31 @@ describe("options", () => {
     );
   });
 
+  test("indices: elements open at the end of the input end there", () => {
+    const options = {
+      xmlMode: true,
+      withStartIndices: true,
+      withEndIndices: true,
+    };
+    const [a] = parse('<a><b x="unterminated', options);
+    assert.equal(a.endIndex, 20);
+    assert.equal(parse("<a>text", options)[0].endIndex, 6);
+  });
+
+  test("indices: the text of CDATA", () => {
+    const options = {
+      xmlMode: true,
+      withStartIndices: true,
+      withEndIndices: true,
+    };
+    const [cdata] = parse("<![CDATA[xy]]>", options);
+    assert.deepEqual([cdata.startIndex, cdata.endIndex], [0, 13]);
+    assert.deepEqual(
+      [cdata.children[0].startIndex, cdata.children[0].endIndex],
+      [9, 10],
+    );
+  });
+
   test("withStartIndices and withEndIndices", () => {
     const html = "<!doctype html>a<p>b<!--c--><div>d</div>";
     const indices = (nodes) =>
@@ -362,6 +403,37 @@ describe("Parser", () => {
       ["closetag", "br"],
       ["comment", "c"],
       ["end"],
+    ]);
+  });
+
+  test("callbacks get exactly the arguments of the event", () => {
+    const calls = [];
+    const handler = {};
+    for (const name of [
+      "onopentag",
+      "onclosetag",
+      "ontext",
+      "oncomment",
+      "oncdatastart",
+      "oncdataend",
+      "onprocessinginstruction",
+      "onend",
+    ]) {
+      handler[name] = (...args) => calls.push([name, args.length]);
+    }
+    new Parser(handler, { xmlMode: true }).end(
+      "<a>t</a><!--c--><![CDATA[d]]><?pi?>",
+    );
+    assert.deepEqual(calls, [
+      ["onopentag", 2],
+      ["ontext", 1],
+      ["onclosetag", 1],
+      ["oncomment", 1],
+      ["oncdatastart", 0],
+      ["ontext", 1],
+      ["oncdataend", 0],
+      ["onprocessinginstruction", 2],
+      ["onend", 0],
     ]);
   });
 
