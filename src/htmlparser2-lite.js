@@ -69,27 +69,37 @@ const htmlRegExp = (source, flags) =>
 // set right before each use and read right after, before any callback, which
 // can start another parse.
 
-// The tokens in HTML and in XML. Tag names start with a letter in HTML, and
-// with almost anything in XML (in start tags, not with "!" and "?", which
-// start other markup). Groups (the end groups are "" at the end of the
-// input): 1 start tag name (first as the most common), 2 what's before ">" if
-// the tag ends right after its name (then the attribute regex isn't needed),
-// 3 end tag name, 4 bogus comment after "</" (HTML), 5 comment, 6 its end
-// ("-?>" right after "<!--" in HTML), 7 CDATA, 8 its end, 9 after "<!", 10
-// its end, 11 after "<?", 12 its end (XML).
-const TOKENS = [false, true].map((xmlMode) => {
-  const startName = xmlMode ? "[^ />!?]" : "[a-zA-Z]";
-  const endName = xmlMode ? "[^ />]" : "[a-zA-Z]";
+// The start and end tags in HTML and in XML, and the places where other
+// tokens can be (see OTHER_TOKENS): "<" followed by "!", "?" or "/". These
+// are split, so that the most common tokens get small results. Tag names
+// start with a letter in HTML, and with almost anything in XML (in start
+// tags, not with "!" and "?", which start other markup). Groups: 1 start tag
+// name, 2 what's before ">" if the tag ends right after its name (then the
+// attribute regex isn't needed), 3 end tag name.
+const TAGS = [false, true].map((xmlMode) =>
+  htmlRegExp(
+    `<(?:(${xmlMode ? "[^ />!?]" : "[a-zA-Z]"}[^ />]*)(?:([ /]*)>)?|/${xmlMode ? "[ ]*" : ""}(${xmlMode ? "[^ />]" : "[a-zA-Z]"}[^ />]*)[^>]*>?|(?=[!?/]))`,
+    "g",
+  ),
+);
+
+// The other tokens in HTML and in XML. Groups (the end groups are "" at the
+// end of the input): 1 bogus comment after "</" (HTML), 2 comment, 3 its end
+// ("-?>" right after "<!--" in HTML), 4 CDATA, 5 its end, 6 after "<!", 7 its
+// end, 8 after "<?", 9 its end (XML).
+const OTHER_TOKENS = [false, true].map((xmlMode) => {
   const htmlOnly = xmlMode ? "(?!)" : "";
   return htmlRegExp(
-    `<(?:(${startName}[^ />]*)(?:([ /]*)>)?|/${xmlMode ? "[ ]*" : ""}(${endName}[^ />]*)[^>]*>?|${htmlOnly}/(?=[^])([^>]*)>?|!--(.*?)(--!?>|${htmlOnly}(?<=!--)-?>|$)|!\\[CDATA\\[(.*?)(]]>|$)|!(${xmlMode ? "-?>?" : ""}[^>]*)(>?)|\\?${xmlMode ? "(.*?)(\\?>|$)" : "([^>]*)()>?"})`,
-    "gs",
+    `<(?:${htmlOnly}/(?=[^])([^>]*)>?|!--(.*?)(--!?>|${htmlOnly}(?<=!--)-?>|$)|!\\[CDATA\\[(.*?)(]]>|$)|!(${xmlMode ? "-?>?" : ""}[^>]*)(>?)|\\?${xmlMode ? "(.*?)(\\?>|$)" : "([^>]*)()>?"})`,
+    "ys",
   );
 });
 
-// An attribute or the end of a start tag (group 1: what's before ">")
+// An attribute or the end of a start tag. Groups: 1 what's before ">" at the
+// end, 2 name, 3-5 value (in double quotes, in single quotes, unquoted), 6
+// what's before ">" if the tag ends right after the attribute.
 const ATTRIBUTE = htmlRegExp(
-  `([ /]*)(?:>|([^ />][^ />=]*)(?:[ ]*=[ ]*(?:"([^"]*)"|'([^']*)'|(?!["' ])([^ >]*))|(?![ ]*=)))`,
+  `([ /]*)(?:>|([^ />][^ />=]*)(?:[ ]*=[ ]*(?:"([^"]*)"|'([^']*)'|(?!["' ])([^ >]*))|(?![ ]*=))(?:([ /]*)>)?)`,
   "y",
 );
 
@@ -265,7 +275,8 @@ function Parser(handler, options = {}) {
         prefix + data,
       );
 
-    const TOKEN = TOKENS[xmlMode ? 1 : 0];
+    const TAG = TAGS[xmlMode ? 1 : 0];
+    const OTHER_TOKEN = OTHER_TOKENS[xmlMode ? 1 : 0];
 
     let index = 0;
     let start;
@@ -281,30 +292,23 @@ function Parser(handler, options = {}) {
     };
 
     for (;;) {
-      TOKEN.lastIndex = index;
-      match = TOKEN.exec(input);
-      const tokenEnd = TOKEN.lastIndex;
+      // The next tag, or other token after "<!", "<?" or "</"
+      let other;
+      TAG.lastIndex = index;
+      while ((match = TAG.exec(input)) && !match[1] && !match[3]) {
+        OTHER_TOKEN.lastIndex = match.index;
+        if ((other = OTHER_TOKEN.exec(input))) break;
+        // Not a token, the "<" is text
+        TAG.lastIndex = match.index + 1;
+      }
+      const tokenEnd = other ? OTHER_TOKEN.lastIndex : TAG.lastIndex;
       start = match?.index ?? input.length;
       onText(start);
       if (!match) break;
       index = tokenEnd;
       setPosition(start, index - 1);
 
-      const [
-        ,
-        startTag,
-        startTagEnd,
-        endTag,
-        bogusEndTag,
-        comment,
-        commentEnd,
-        cdata,
-        cdataEnd,
-        declaration,
-        declarationEnd,
-        instruction,
-        instructionEnd,
-      ] = match;
+      const [, startTag, startTagEnd, endTag] = match;
 
       if (startTag) {
         const name = tagName(startTag);
@@ -321,7 +325,8 @@ function Parser(handler, options = {}) {
           match = ATTRIBUTE.exec(input);
           if (!match) break;
           index = ATTRIBUTE.lastIndex;
-          const [, before, rawKey, doubleQuoted, singleQuoted, unquoted] = match;
+          const [, before, rawKey, doubleQuoted, singleQuoted, unquoted, after] =
+            match;
           // The end of the tag
           if (!rawKey) {
             beforeEnd = before;
@@ -334,6 +339,8 @@ function Parser(handler, options = {}) {
               true,
             );
           }
+          // The end of the tag right after the attribute
+          beforeEnd = after;
         }
         // Unterminated tag at the end of the input, drop it
         if (beforeEnd == null) break;
@@ -368,7 +375,25 @@ function Parser(handler, options = {}) {
           onText(start, textOnly > 1);
           index = start;
         }
-      } else if (comment != null) {
+      } else if (endTag) {
+        // Drop an unterminated end tag, it can only be at the end of the
+        // input
+        if (input[index - 1] == ">") onCloseTag(tagName(endTag));
+      } else {
+        const [
+          ,
+          bogusEndTag,
+          comment,
+          commentEnd,
+          cdata,
+          cdataEnd,
+          declaration,
+          declarationEnd,
+          instruction,
+          instructionEnd,
+        ] = other;
+
+        if (comment != null) {
         // A partial "--!>" at the end of the input isn't part of an HTML
         // comment
         onComment(
@@ -407,10 +432,7 @@ function Parser(handler, options = {}) {
         } else if (declarationEnd) {
           onInstruction("!", declaration, declaration);
         }
-      } else if (endTag) {
-        // Drop an unterminated end tag, it can only be at the end of the
-        // input
-        if (input[index - 1] == ">") onCloseTag(tagName(endTag));
+      }
       }
     }
 
