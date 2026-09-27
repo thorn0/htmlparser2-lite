@@ -736,6 +736,27 @@ describe("Parser", () => {
     ]);
   });
 
+  test("reentrancy in the middle of a tag and of raw text", () => {
+    // Parses markup like the one being parsed, in the middle of it
+    const nested = (text) => {
+      parse(`<x a=1 b='2'><script>a</script></x>`);
+      parse(`<x a="1" c>`, { xmlMode: true });
+      return text;
+    };
+    const html = '<a x="&1" y="&2" z=3><script>a</b></script><b c="&3">d</b></a>';
+    const expected = serialize(parse(html));
+    const dom = parse(html, { decodeEntities: nested });
+    assert.deepEqual(dom[0].attribs, { x: "&1", y: "&2", z: "3" });
+    assert.equal(serialize(dom), expected);
+    const texts = [];
+    new Parser({
+      ontext(text) {
+        texts.push(nested(text));
+      },
+    }).end("a<b c=1>b<script>c</d></script>e</b>");
+    assert.deepEqual(texts, ["a", "b", "c</d>", "e"]);
+  });
+
   test("each end call parses its input separately", () => {
     const log = [];
     const parser = new Parser({
@@ -758,6 +779,16 @@ describe("linear time", () => {
       assert.ok(performance.now() - start < 1000);
     });
 
+  // Deeply nested elements (<div>, unlike e.g. <a> or <p>, isn't closed by
+  // the same start tag)
+  const nested = (n) => "<div>".repeat(n);
+
+  test("the nested elements are nested", () => {
+    let depth = 0;
+    for (let [node] = parse(nested(10)); node; [node] = node.children) depth++;
+    assert.equal(depth, 10);
+  });
+
   for (const chunk of [
     "<!",
     "<?",
@@ -771,7 +802,7 @@ describe("linear time", () => {
     fast(`parse(${JSON.stringify(chunk)} * n)`, (n) => parse(chunk.repeat(n)));
   }
   fast("unmatched end tags in deeply nested elements", (n) =>
-    parse("<a>".repeat(n) + "</x>".repeat(n)),
+    parse(nested(n) + "</x>".repeat(n)),
   );
   fast("deeply nested elements with SVG names outside SVG", (n) =>
     parse("<clippath>".repeat(n) + "</clippath>".repeat(n)),
@@ -803,12 +834,14 @@ describe("linear time", () => {
       Array.from({ length: n * 4 }, () => "x"),
     ),
   );
-  fast("serialize(deeply nested elements)", (n) =>
-    serialize(parse("<a>".repeat(n))),
-  );
+  fast("serialize(deeply nested elements)", (n) => serialize(parse(nested(n))));
   fast("serialize(a long name, many text children to escape)", (n) =>
     serialize(parse(`<${"x".repeat(n)}>` + "<1<!---->".repeat(n))),
   );
+  fast("serialize(many nodes deep in the DOM with different parents)", (n) => {
+    const dom = parse(nested(n / 2) + "<b><i></i></b>".repeat(n / 2));
+    serialize(htmlparser.findAll("i", dom));
+  });
 });
 
 test("normalizeWhitespace across text split by ignored end tags", () => {
@@ -839,6 +872,49 @@ describe("serialize", () => {
       "<xmp>a<b</xmp><div>a&lt;b</div>",
     );
     assert.equal(roundTrip("<style>a<b</style>"), "<style>a<b</style>");
+  });
+
+  test("undecoded raw text isn't escaped in XML output either", () => {
+    // Like with htmlparser2-20kb, e.g. for HTML with self-closing tags
+    const markup = '<div><script>if (a<b) f("</p>")</script><x a="1"/>1 &lt; 2</div>';
+    assert.equal(
+      roundTrip(markup, { recognizeSelfClosing: true }, { xmlMode: true }),
+      markup,
+    );
+  });
+
+  test("text is escaped in SVG and MathML, where it isn't raw", () => {
+    // CDATA is text there
+    const html =
+      "<svg><style><![CDATA[</style><script>alert(1)</script>]]></style></svg>";
+    const options = { recognizeSelfClosing: true };
+    const escaped =
+      "<svg><style>&lt;/style>&lt;script>alert(1)&lt;/script></style></svg>";
+    for (const xmlMode of [false, true]) {
+      assert.equal(roundTrip(html, options, { xmlMode }), escaped);
+    }
+    assert.equal(htmlparser.findOne("script", parse(escaped, options)), null);
+    // HTML inside elements like <foreignObject>
+    const foreign = "<svg><desc><script>a<b</script></desc></svg>";
+    assert.equal(roundTrip(foreign, options, { xmlMode: true }), foreign);
+  });
+
+  test("parts of a DOM are written like in the whole DOM", () => {
+    const dom = parse(
+      "<svg><g><style><![CDATA[a<b]]></style><circle r=1></circle></g>" +
+        "<desc><script>a<b</script><br></desc></svg>",
+    );
+    const { findOne } = htmlparser;
+    const [svg] = dom;
+    for (const xmlMode of [false, true]) {
+      assert.equal(
+        serialize(svg.children[0].children, { xmlMode }),
+        '<style>a&lt;b</style><circle r="1"/>',
+      );
+      assert.equal(serialize(findOne("script", dom), { xmlMode }), "<script>a<b</script>");
+    }
+    assert.equal(serialize(findOne("br", dom)), "<br>");
+    assert.equal(serialize(findOne("br", dom), { xmlMode: "foreign" }), "<br>");
   });
 
   test("single node", () => {

@@ -76,6 +76,10 @@ export function parse(
   options?: ParserOptions & HandlerOptions,
 ): DomNode[];
 
+/**
+ * Writes nodes as markup. Nodes that are part of a DOM are written as in the
+ * whole DOM, e.g. the content of an element inside <svg> as SVG.
+ */
 export function serialize(
   dom: DomNode | DomNode[],
   options?: SerializerOptions,
@@ -267,16 +271,18 @@ export interface HandlerOptions {
 export interface SerializerOptions {
   /**
    * `true`: output XML: elements without children self-close (`<x/>`),
-   * elements like <br> aren't void, attributes always get values, no text is
-   * raw.
+   * elements like <br> aren't void, attributes always get values.
    *
    * `"foreign"`: output HTML as inside <svg> or <math>: elements without
-   * children self-close, attributes always get values, no text is raw, except
-   * inside elements like <foreignObject>, which contain HTML.
+   * children self-close and attributes always get values, except inside
+   * elements like <foreignObject>, which contain HTML.
    *
    * `false`: output HTML, switching to `"foreign"` inside <svg> and <math>.
+   *
    * The text of <script>, <style> and the other elements whose text is raw
-   * isn't escaped.
+   * in HTML isn't escaped outside <svg> and <math>, in XML too unless
+   * `decodeEntities` is set (e.g. for HTML parsed with `recognizeSelfClosing`
+   * and written with `xmlMode: true`).
    *
    * Default: `false`
    */
@@ -291,7 +297,8 @@ export interface SerializerOptions {
 
   /**
    * For a DOM parsed with `decodeEntities`: encode `&` as well, and `>` in
-   * text and `<` in attribute values (needed for XML).
+   * text and `<` in attribute values (needed for XML). In XML, the text of
+   * <script>, <style> etc. is encoded too.
    *
    * Default: `false`
    */

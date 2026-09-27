@@ -59,16 +59,54 @@ const IMPLIED_CLOSE = new Map(
   }),
 );
 
-// In markup, only ASCII whitespace counts as whitespace, so `\s` (always
-// inside brackets) gets replaced with it
-const htmlRegExp = (re) =>
-  RegExp(re.source.replaceAll("\\s", "\t\n\f\r "), re.flags);
+// In markup, only ASCII whitespace counts as whitespace. In the regular
+// expression sources given to this, a space (always inside brackets) stands
+// for it.
+const htmlRegExp = (source, flags) =>
+  RegExp(source.replaceAll(" ", "\t\n\f\r "), flags);
+
+// The regular expressions below are shared by all parses: their lastIndex is
+// set right before each use and read right after, before any callback, which
+// can start another parse.
+
+// The tokens in HTML and in XML. Tag names start with a letter in HTML, and
+// with almost anything in XML (in start tags, not with "!" and "?", which
+// start other markup). Groups (the end groups are "" at the end of the
+// input): 1 start tag name (first as the most common), 2 what's before ">" if
+// the tag ends right after its name (then the attribute regex isn't needed),
+// 3 end tag name, 4 bogus comment after "</" (HTML), 5 comment, 6 its end
+// ("-?>" right after "<!--" in HTML), 7 CDATA, 8 its end, 9 after "<!", 10
+// its end, 11 after "<?", 12 its end (XML).
+const TOKENS = [false, true].map((xmlMode) => {
+  const startName = xmlMode ? "[^ />!?]" : "[a-zA-Z]";
+  const endName = xmlMode ? "[^ />]" : "[a-zA-Z]";
+  const htmlOnly = xmlMode ? "(?!)" : "";
+  return htmlRegExp(
+    `<(?:(${startName}[^ />]*)(?:([ /]*)>)?|/${xmlMode ? "[ ]*" : ""}(${endName}[^ />]*)[^>]*>?|${htmlOnly}/(?=[^])([^>]*)>?|!--(.*?)(--!?>|${htmlOnly}(?<=!--)-?>|$)|!\\[CDATA\\[(.*?)(]]>|$)|!(${xmlMode ? "-?>?" : ""}[^>]*)(>?)|\\?${xmlMode ? "(.*?)(\\?>|$)" : "([^>]*)()>?"})`,
+    "gs",
+  );
+});
+
+// An attribute or the end of a start tag (group 1: what's before ">")
+const ATTRIBUTE = htmlRegExp(
+  `([ /]*)(?:>|([^ />][^ />=]*)(?:[ ]*=[ ]*(?:"([^"]*)"|'([^']*)'|(?!["' ])([^ >]*))|(?![ ]*=)))`,
+  "y",
+);
+
+// The end tags of the elements with text content (not <plaintext>, which has
+// none)
+const TEXT_END_TAGS = new Map(
+  [...TEXT_ONLY]
+    .filter(([, kind]) => kind < 3)
+    .map(([name]) => [name, htmlRegExp(`</${name}[ />]`, "gi")]),
+);
 
 const tagType = (name) =>
   name == "script" || name == "style" ? name : "tag";
 
-// Elements have the types "tag", "script" and "style"
-const isTag = (node) => tagType(node.type) == node.type;
+const TAG_TYPES = words("tag script style");
+
+const isTag = (node) => TAG_TYPES.has(node.type);
 
 const lowerCase = (str, enabled) => (enabled ? str.toLowerCase() : str);
 
@@ -77,7 +115,8 @@ const ESCAPES = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" };
 // Checking first is much faster: most strings have nothing to replace, and
 // replaceAll is slow even when it finds nothing
 const escape = (str, chars) => {
-  for (const char of chars) {
+  for (let i = 0; i < chars.length; i++) {
+    const char = chars[i];
     if (str.includes(char)) str = str.replaceAll(char, ESCAPES[char]);
   }
   return str;
@@ -136,7 +175,8 @@ function Parser(handler, options = {}) {
   parser.startIndex = parser.endIndex = 0;
 
   parser.end = (input = "") => {
-    const { xmlMode, decodeEntities } = options;
+    const { xmlMode, decodeEntities, recognizeSelfClosing, recognizeCDATA } =
+      options;
     const lowerCaseTags = options.lowerCaseTags ?? !xmlMode;
     const lowerCaseAttributeNames = options.lowerCaseAttributeNames ?? !xmlMode;
 
@@ -225,27 +265,7 @@ function Parser(handler, options = {}) {
         prefix + data,
       );
 
-    // Created per call because they keep state in lastIndex, and a callback
-    // can start another parse. Tag names start with a letter in HTML, and
-    // with almost anything in XML (in start tags, not with "!" and "?", which
-    // start other markup).
-    const startNamePattern = `(${xmlMode ? "[^\\s/>!?]" : "[a-zA-Z]"}[^\\s/>]*)`;
-    const endNamePattern = `(${xmlMode ? "[^\\s/>]" : "[a-zA-Z]"}[^\\s/>]*)`;
-    const htmlOnly = xmlMode ? "(?!)" : "";
-    // Groups (the end groups are "" at the end of the input): 1 start tag
-    // name (first as the most common), 2 end tag name, 3 bogus comment after
-    // "</" (HTML), 4 comment, 5 its end ("-?>" right after "<!--" in HTML),
-    // 6 CDATA, 7 its end, 8 after "<!", 9 its end, 10 after "<?", 11 its end
-    // (XML)
-    const TOKEN = htmlRegExp(
-      RegExp(
-        `<(?:${startNamePattern}|/${xmlMode ? "[\\s]*" : ""}${endNamePattern}[^>]*>?|${htmlOnly}/(?=[^])([^>]*)>?|!--(.*?)(--!?>|${htmlOnly}(?<=!--)-?>|$)|!\\[CDATA\\[(.*?)(]]>|$)|!(${xmlMode ? "-?>?" : ""}[^>]*)(>?)|\\?${xmlMode ? "(.*?)(\\?>|$)" : "([^>]*)()>?"})`,
-        "gs",
-      ),
-    );
-    const ATTRIBUTE = htmlRegExp(
-      /([\s/]*)(?:>|([^\s/>][^\s/>=]*)(?:[\s]*=[\s]*(?:"([^"]*)"|'([^']*)'|(?!["'\s])([^\s>]*))|(?![\s]*=)))/y,
-    );
+    const TOKEN = TOKENS[xmlMode ? 1 : 0];
 
     let index = 0;
     let start;
@@ -263,15 +283,17 @@ function Parser(handler, options = {}) {
     for (;;) {
       TOKEN.lastIndex = index;
       match = TOKEN.exec(input);
+      const tokenEnd = TOKEN.lastIndex;
       start = match?.index ?? input.length;
       onText(start);
       if (!match) break;
-      index = TOKEN.lastIndex;
+      index = tokenEnd;
       setPosition(start, index - 1);
 
       const [
         ,
         startTag,
+        startTagEnd,
         endTag,
         bogusEndTag,
         comment,
@@ -286,13 +308,25 @@ function Parser(handler, options = {}) {
 
       if (startTag) {
         const name = tagName(startTag);
+        // Text-only names aren't changed by tagName, except for lowercasing
+        const textOnlyName = lowerCaseTags ? name : name.toLowerCase();
         const textOnly =
-          !xmlMode && !foreignContext && TEXT_ONLY.get(name.toLowerCase());
+          !xmlMode && !foreignContext && TEXT_ONLY.get(textOnlyName);
         const attribs = {};
 
-        ATTRIBUTE.lastIndex = index;
-        while ((match = ATTRIBUTE.exec(input)) && match[2]) {
-          const [, , rawKey, doubleQuoted, singleQuoted, unquoted] = match;
+        // The whitespace and slashes before ">"
+        let beforeEnd = startTagEnd;
+        while (beforeEnd == null) {
+          ATTRIBUTE.lastIndex = index;
+          match = ATTRIBUTE.exec(input);
+          if (!match) break;
+          index = ATTRIBUTE.lastIndex;
+          const [, before, rawKey, doubleQuoted, singleQuoted, unquoted] = match;
+          // The end of the tag
+          if (!rawKey) {
+            beforeEnd = before;
+            break;
+          }
           const key = lowerCase(rawKey, lowerCaseAttributeNames);
           if (!Object.hasOwn(attribs, key)) {
             attribs[key] = decoded(
@@ -302,9 +336,8 @@ function Parser(handler, options = {}) {
           }
         }
         // Unterminated tag at the end of the input, drop it
-        if (!match) break;
+        if (beforeEnd == null) break;
 
-        index = ATTRIBUTE.lastIndex;
         // A <form> in another one is ignored
         if (!xmlMode && name == "form" && openCounts.form) continue;
         if (!xmlMode) {
@@ -320,19 +353,18 @@ function Parser(handler, options = {}) {
         // slash, it's the last non-whitespace character. The foreign context
         // of the element itself applies (`<svg/>` is self-closing), hence
         // this check comes after onOpenTag.
-        const [, beforeEnd] = match;
         const selfClosing = beforeEnd.includes("/");
-        if (
-          selfClosing &&
-          (xmlMode || options.recognizeSelfClosing || foreignContext)
-        ) {
+        if (selfClosing && (xmlMode || recognizeSelfClosing || foreignContext)) {
           closeCurrentTag(name);
         }
 
-        if (textOnly && !(selfClosing && options.recognizeSelfClosing)) {
-          const end = htmlRegExp(RegExp(`</${startTag}[\\s/>]|$`, "gi"));
-          end.lastIndex = textOnly > 2 ? input.length : index;
-          start = end.exec(input).index;
+        if (textOnly && !(selfClosing && recognizeSelfClosing)) {
+          start = input.length;
+          if (textOnly < 3) {
+            const endTag = TEXT_END_TAGS.get(textOnlyName);
+            endTag.lastIndex = index;
+            start = endTag.exec(input)?.index ?? start;
+          }
           onText(start, textOnly > 1);
           index = start;
         }
@@ -343,7 +375,7 @@ function Parser(handler, options = {}) {
           commentEnd || xmlMode ? comment : comment.replace(/-(-!?)?$/, ""),
         );
       } else if (cdata != null) {
-        if (xmlMode || (cdataEnd && options.recognizeCDATA)) {
+        if (xmlMode || (cdataEnd && recognizeCDATA)) {
           if (cdataEnd || cdata) {
             handler?.oncdatastart?.();
             // The text is after "<![CDATA["
@@ -390,70 +422,85 @@ function Parser(handler, options = {}) {
 }
 
 const parse = (markup, options = {}) => {
+  const { xmlMode, normalizeWhitespace, withStartIndices, withEndIndices } =
+    options;
   const dom = [];
   const openElements = [];
   // Whether the last text node, the only one text can be appended to, ends
   // with a space (when normalizing whitespace)
   let endsWithSpace;
 
+  // The parent and the previous sibling of the next node
+  let parent;
+  let siblings;
+  let prev;
+  const locate = () => {
+    parent = openElements.at(-1) ?? null;
+    siblings = parent?.children ?? dom;
+    prev = siblings.at(-1) ?? null;
+  };
+
   const addNode = (node) => {
-    const parent = openElements.at(-1) ?? null;
-    const siblings = parent?.children ?? dom;
-    const prev = siblings.at(-1) ?? null;
-    node.parent = parent;
-    node.prev = prev;
-    node.next = null;
     if (prev) prev.next = node;
-    if (options.withStartIndices) node.startIndex = parser.startIndex;
-    if (options.withEndIndices) node.endIndex = parser.endIndex;
+    if (withStartIndices) node.startIndex = parser.startIndex;
+    if (withEndIndices) node.endIndex = parser.endIndex;
     siblings.push(node);
     return node;
   };
 
   const onClose = () => {
     const element = openElements.pop();
-    if (options.withEndIndices) element.endIndex = parser.endIndex;
+    if (withEndIndices) element.endIndex = parser.endIndex;
   };
 
   const parser = new Parser(
     {
       onopentag(name, attribs) {
+        locate();
         openElements.push(
           addNode({
-            type: options.xmlMode ? "tag" : tagType(name),
+            type: xmlMode ? "tag" : tagType(name),
             name,
             attribs,
             children: [],
+            parent,
+            prev,
+            next: null,
           }),
         );
       },
       onclosetag: onClose,
       oncdatastart() {
-        openElements.push(addNode({ type: "cdata", children: [] }));
+        locate();
+        openElements.push(
+          addNode({ type: "cdata", children: [], parent, prev, next: null }),
+        );
       },
       oncdataend: onClose,
       ontext(data) {
-        const node = (openElements.at(-1)?.children ?? dom).at(-1);
-        const append = node?.type == "text";
+        locate();
+        const append = prev?.type == "text";
         // Only the new text is normalized, and the existing text isn't even
         // read, so that appending many pieces takes linear time
-        if (options.normalizeWhitespace) {
+        if (normalizeWhitespace) {
           data = data.replace(/\s+/g, " ");
           if (append && endsWithSpace && data[0] == " ") data = data.slice(1);
           if (data || !append) endsWithSpace = data.at(-1) == " ";
         }
         if (append) {
-          node.data += data;
-          if (options.withEndIndices) node.endIndex = parser.endIndex;
+          prev.data += data;
+          if (withEndIndices) prev.endIndex = parser.endIndex;
         } else {
-          addNode({ type: "text", data });
+          addNode({ type: "text", data, parent, prev, next: null });
         }
       },
       oncomment(data) {
-        addNode({ type: "comment", data });
+        locate();
+        addNode({ type: "comment", data, parent, prev, next: null });
       },
       onprocessinginstruction(name, data) {
-        addNode({ type: "directive", name, data });
+        locate();
+        addNode({ type: "directive", name, data, parent, prev, next: null });
       },
     },
     options,
@@ -463,30 +510,56 @@ const parse = (markup, options = {}) => {
   return dom;
 };
 
+// The characters to escape in text and in attribute values, and the mode bits
+// (see serialize) where the text of <script> etc. is escaped too. Decoded
+// text needs "&" escaped too, for XML also ">" in text ("]]>"), "<" in
+// attribute values, and all raw text.
+const ESCAPING = ["<", '"', 1];
+const DECODED_ESCAPING = ["&<>", '&<"', 3];
+
+// A foreign context (see FOREIGN_CONTEXTS) sets or clears bit 0 of a mode
+const inContext = (mode, context) =>
+  context == null ? mode : context ? mode | 1 : mode & 2;
+
 // Uses a stack instead of recursion to support any nesting depth
 const serialize = (dom, options = {}) => {
-  // The characters to escape in text and in attribute values. Decoded text
-  // needs "&" escaped too, and, for XML, ">" in text ("]]>") and "<" in
-  // attribute values.
-  const [textChars, attributeChars] = options.decodeEntities
-    ? ["&<>", '&<"']
-    : ["<", '"'];
+  const { xmlMode, decodeEntities, spaceInSelfClosing } = options;
+  const [textChars, attributeChars, escapedModes] = decodeEntities
+    ? DECODED_ESCAPING
+    : ESCAPING;
   let output = "";
-  // Nodes and end tags to output, in reverse order, and the XML modes for
-  // them (separate arrays to avoid allocations)
+  // Nodes and end tags to output, in reverse order, and their modes
+  // (separate arrays to avoid allocations): bit 1 for XML, bit 0 for SVG
+  // and MathML content, which are written with XML syntax too
   const stack = [];
   const modes = [];
-  const pushNodes = (nodes, xmlMode) => {
-    for (let i = nodes.length; i--;) {
-      stack.push(nodes[i]);
-      modes.push(xmlMode);
+
+  // The given nodes are written as in the whole DOM: the nearest ancestor
+  // with a foreign context decides. The modes found for the ancestors on
+  // the way are remembered, so that each is visited once.
+  const nodes = Array.isArray(dom) ? dom : [dom];
+  let ancestorModes;
+  for (let i = nodes.length; i--; ) {
+    const node = nodes[i];
+    let ancestor = node;
+    let context;
+    let mode;
+    while (
+      (ancestor = ancestor.parent) &&
+      (mode = ancestorModes?.get(ancestor)) == null &&
+      (context = FOREIGN_CONTEXTS.get(ancestor.name)) == null
+    );
+    mode ??= inContext(xmlMode == "foreign" ? 1 : xmlMode ? 2 : 0, context);
+    for (let next = node.parent; next != ancestor; next = next.parent) {
+      (ancestorModes ??= new Map()).set(next, mode);
     }
-  };
-  pushNodes([dom].flat(), options.xmlMode);
+    stack.push(node);
+    modes.push(mode);
+  }
 
   while (stack.length) {
     const node = stack.pop();
-    const xmlMode = modes.pop();
+    let mode = modes.pop();
     if (typeof node == "string") {
       output += node;
       continue;
@@ -495,27 +568,30 @@ const serialize = (dom, options = {}) => {
     const { type, name, data, attribs, children, parent } = node;
 
     if (isTag(node)) {
-      let xml =
-        xmlMode == "foreign" && FOREIGN_CONTEXTS.get(parent?.name) === false
-          ? false
-          : xmlMode;
-      if (!xml && FOREIGN_CONTEXTS.get(name)) xml = "foreign";
+      // The content of elements like <foreignObject> is HTML, while they are
+      // still written as in SVG
+      const context = FOREIGN_CONTEXTS.get(name);
+      if (context) mode |= 1;
 
       output += `<${name}`;
       for (const key in attribs) {
         const value = attribs[key];
         output += ` ${key}`;
-        if (value || xml) output += `="${escape(value, attributeChars)}"`;
+        if (value || mode) output += `="${escape(value, attributeChars)}"`;
       }
-      if (xml && !children?.length) {
-        output += options.spaceInSelfClosing ? " />" : "/>";
+      if (mode && !children?.length) {
+        output += spaceInSelfClosing ? " />" : "/>";
       } else {
         output += ">";
-        if (xml || !VOID_ELEMENTS.has(name)) {
+        if (mode || !VOID_ELEMENTS.has(name)) {
           stack.push(`</${name}>`);
           modes.push(0);
         }
-        pushNodes(children ?? [], xml);
+        const childMode = inContext(mode, context);
+        for (let i = children?.length ?? 0; i--; ) {
+          stack.push(children[i]);
+          modes.push(childMode);
+        }
       }
     } else if (type == "directive") {
       output += `<${data}>`;
@@ -524,14 +600,14 @@ const serialize = (dom, options = {}) => {
     } else if (type == "cdata") {
       output += `<![CDATA[${children[0].data}]]>`;
     } else if (data) {
-      // Only text that needs escaping is checked for being raw, which it can
-      // be only in HTML (outside SVG and MathML). The names of the elements
-      // with raw text are shorter than 10 characters, so only that many are
-      // lowercased.
+      // Only text that needs escaping is checked for being raw, which it is
+      // where it is when parsing HTML, in XML output too (HTML written with
+      // XML syntax). The names of the elements with raw text are shorter than
+      // 10 characters, so only that many are lowercased.
       const escaped = escape(data, textChars);
       output +=
         escaped != data &&
-        !xmlMode &&
+        !(mode & escapedModes) &&
         TEXT_ONLY.get(parent?.name?.slice(0, 10).toLowerCase()) > 1
           ? data
           : escaped;

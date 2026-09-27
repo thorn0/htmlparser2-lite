@@ -4,7 +4,7 @@
 [![npm bundle size (minified)](https://img.shields.io/bundlephobia/min/htmlparser2-lite.svg)](https://unpkg.com/htmlparser2-lite)
 [![npm bundle size (minified + gzip)](https://img.shields.io/bundlephobia/minzip/htmlparser2-lite.svg)](https://bundlephobia.com/result?p=htmlparser2-lite)
 
-> [Fast & forgiving HTML/XML parser](https://github.com/fb55/htmlparser2) for the browser, < 8 KB minified (4 KB gzipped), no dependencies
+> [Fast & forgiving HTML/XML parser](https://github.com/fb55/htmlparser2) for the browser, < 9 KB minified (4.1 KB gzipped), no dependencies
 
 A compact reimplementation of [`htmlparser2`](https://github.com/fb55/htmlparser2) and friends: the API of `htmlparser2` 3.x with the
 [parsing rules](#parsing-rules) of `htmlparser2` 12. It passes the [`htmlparser2`](https://github.com/fb55/htmlparser2/tree/v3.10.1/test/Events)
@@ -58,6 +58,10 @@ Also works with `require("htmlparser2-lite")`, AMD, and as a `<script>` that def
 | `xmlMode`            | `false` | `true`: output XML. `"foreign"`: output HTML as inside SVG or MathML (which `false` switches to inside `<svg>` and `<math>`) |
 | `spaceInSelfClosing` | `false` | Write self-closing elements as `<x />` instead of `<x/>`                                                                     |
 | `decodeEntities`     | `false` | For a DOM parsed with `decodeEntities`: encode `&` too (and for XML, `>` in text and `<` in attribute values)                |
+
+The text of `<script>`, `<style>` and the other elements whose text is raw in HTML isn't escaped outside SVG and MathML, in XML output
+too unless `decodeEntities` is set, so HTML can be written with XML syntax (e.g. parsed with `recognizeSelfClosing` and serialized with
+`xmlMode: true`). Nodes that are part of a DOM are written as in the whole DOM, e.g. the content of an element inside `<svg>` as SVG.
 
 See the [type definitions](https://github.com/thorn0/htmlparser2-lite/blob/master/dist/htmlparser2-lite.d.ts) for details.
 
@@ -133,8 +137,9 @@ The parsing rules are those of `htmlparser2` 12, which follows the HTML spec mor
 
 ## Performance
 
-On real-world pages, it parses about 1.3× as fast as its predecessor, `htmlparser2-20kb` (from about 0.9× on some large pages to 2.5× on
-feeds), and serializes about 1.1× as fast.
+On real-world pages, it parses about 1.3× as fast as its predecessor, `htmlparser2-20kb` (from about 0.95× on some large pages to 3× on
+feeds), and serializes about 1.4× as fast. Markup with many tags and little text, like templates, parses about as fast (about 0.95×),
+and inputs of a few dozen characters parse slower (0.4× to 0.9×), because of a higher fixed cost per call.
 
 Time grows linearly with the size of the input for any markup, so even malicious HTML can't make parsing hang, and elements can be nested
 arbitrarily deep. The same goes for `remove` and `create` when they get many nodes at once, so pass all the nodes to remove in one call
@@ -155,6 +160,9 @@ The code is ES2022, it targets [Baseline](https://web.dev/baseline) Widely avail
 - Replace `parser.write(a); parser.write(b); parser.end()` with `parser.end(a + b)`, and `parser.parseComplete(html)` with
   `parser.end(html)`. Handle attributes in `onopentag` instead of `onattribute`.
 - See the [parsing rules](#parsing-rules), which have changed
+- `serialize` escapes `<` in the text of `<noscript>`, and of `<script>`, `<style>` etc. in SVG and MathML (their content is markup
+  when parsing), and leaves the text of `<SCRIPT>` etc. raw whatever the case of the name. It ignores nodes of type `root`, pass
+  their `children` instead.
 
 ## Size comparison
 
