@@ -3,33 +3,55 @@ const words = (str) => new Set(str.split(" "));
 const VOID_ELEMENTS = words(
   "area base basefont br col command embed frame hr img input isindex keygen link meta param source track wbr",
 );
-// true for elements whose content is SVG or MathML (the first two), false for
-// elements in those whose content is HTML. Names are compared lowercased.
+// "svg" and "math" for the elements whose content is SVG and MathML, false
+// for the elements in those whose content is HTML
 const FOREIGN_CONTEXTS = new Map(
-  "svg math mi mo mn ms mtext annotation-xml foreignobject desc title"
+  "svg math mi mo mn ms mtext annotation-xml foreignObject desc title"
     .split(" ")
-    .map((name, i) => [name, i < 2]),
+    .map((name, i) => [name, i < 2 && name]),
 );
-const foreignContextOf = (name) => FOREIGN_CONTEXTS.get(name?.toLowerCase());
-const SPECIAL_ELEMENTS = words("script style");
-const TAG_TYPES = words("tag script style");
+
+// The case of SVG tag names, which are lowercased with the other ones
+const SVG_TAG_NAMES = new Map(
+  (
+    "altGlyph altGlyphDef altGlyphItem animateColor animateMotion animateTransform clipPath foreignObject glyphRef linearGradient radialGradient textPath" +
+    " Blend ColorMatrix ComponentTransfer Composite ConvolveMatrix DiffuseLighting DisplacementMap DistantLight DropShadow Flood FuncA FuncB FuncG FuncR GaussianBlur Image Merge MergeNode Morphology Offset PointLight SpecularLighting SpotLight Tile Turbulence".replaceAll(
+      " ",
+      " fe",
+    )
+  )
+    .split(" ")
+    .map((name) => [name.toLowerCase(), name]),
+);
+
+// The content of these elements is text in HTML (outside SVG and MathML), till
+// their end tag: 1 for RCDATA, 2 for raw text, which isn't decoded when
+// parsing nor escaped when serializing, 3 for raw text till the end of the
+// input. Names are compared lowercased.
+const TEXT_ONLY = new Map(
+  "title textarea script style xmp iframe noembed noframes plaintext"
+    .split(" ")
+    .map((name, i) => [name, i < 2 ? 1 : i < 8 ? 2 : 3]),
+);
 
 // Opening an element implicitly closes the current element if it's one of
 // the elements mapped to it
 const IMPLIED_CLOSE = new Map(
   [
     "tr/tr th td",
-    "th/th",
+    "th/th td",
     "td/thead th td",
     "body/head link script",
+    "a/a",
     "li/li",
-    "p h1 h2 h3 h4 h5 h6 address article aside blockquote details div dl fieldset figcaption figure footer form header hr main nav ol pre section table ul/p",
+    "p address article aside blockquote details div dl fieldset figcaption figure footer form header hr main nav ol pre section table ul/p",
+    "h1 h2 h3 h4 h5 h6/h1 h2 h3 h4 h5 h6 p",
     "select input output button datalist textarea/input option optgroup select button datalist textarea",
     "option/option",
     "optgroup/optgroup option",
     "dd dt/dd dt",
     "rt rp/rt rp",
-    "tbody tfoot/thead tbody",
+    "thead tbody tfoot/thead tbody tfoot tr td th",
   ].flatMap((rule) => {
     const [opened, closed] = rule.split("/");
     const closedSet = words(closed);
@@ -42,17 +64,13 @@ const IMPLIED_CLOSE = new Map(
 const htmlRegExp = (re) =>
   RegExp(re.source.replaceAll("\\s", "\t\n\f\r "), re.flags);
 
-const isTag = (node) => TAG_TYPES.has(node.type);
+const tagType = (name) =>
+  name == "script" || name == "style" ? name : "tag";
 
-const tagType = (name) => (SPECIAL_ELEMENTS.has(name) ? name : "tag");
+// Elements have the types "tag", "script" and "style"
+const isTag = (node) => tagType(node.type) == node.type;
 
 const lowerCase = (str, enabled) => (enabled ? str.toLowerCase() : str);
-
-// Whether the text of the element is raw: in HTML, the text of these elements
-// isn't decoded when parsing, and isn't encoded when serializing
-const isRawText = (name, xmlMode) =>
-  !xmlMode &&
-  /^(style|script|xmp|iframe|noembed|noframes|plaintext|noscript)$/i.test(name);
 
 const ESCAPES = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" };
 
@@ -115,8 +133,7 @@ const createBrowserDecoder = () => {
 
 function Parser(handler, options = {}) {
   const parser = this;
-  parser.startIndex = 0;
-  parser.endIndex = 0;
+  parser.startIndex = parser.endIndex = 0;
 
   parser.end = (input = "") => {
     const { xmlMode, decodeEntities } = options;
@@ -127,21 +144,18 @@ function Parser(handler, options = {}) {
       typeof decodeEntities == "function"
         ? decodeEntities
         : decodeEntities && (xmlMode ? decodeXML : createBrowserDecoder());
-    // Text is decoded unless it's raw, attribute values always
     const decoded = (text, inAttribute) =>
-      decode &&
-      text.includes("&") &&
-      (inAttribute || !isRawText(stack.at(-1), xmlMode))
-        ? decode(text, inAttribute)
-        : text;
+      decode && text.includes("&") ? decode(text, inAttribute) : text;
 
     const stack = [];
     // Numbers of open elements by name, so that end tags matching no open
     // element don't search the stack
     const openCounts = { __proto__: null };
-    const foreignContext = [];
-
-    const emit = (name, ...args) => handler?.[name]?.(...args);
+    // The foreign context of the content of the current element: "svg",
+    // "math", false for HTML inside those, undefined outside; and those of
+    // its ancestors
+    let foreignContext;
+    const foreignContexts = [];
 
     const setPosition = (start, end) => {
       parser.startIndex = start;
@@ -150,32 +164,45 @@ function Parser(handler, options = {}) {
 
     const push = (name) => {
       stack.push(name);
-      openCounts[name] = (openCounts[name] ?? 0) + 1;
+      openCounts[name] = (openCounts[name] | 0) + 1;
+      foreignContexts.push(foreignContext);
+      foreignContext = FOREIGN_CONTEXTS.get(name) ?? foreignContext;
     };
 
     const pop = () => {
       const name = stack.pop();
       openCounts[name]--;
-      emit("onclosetag", name);
+      foreignContext = foreignContexts.pop();
+      handler?.onclosetag?.(name);
+    };
+
+    // Lowercases the name (if enabled) and, in HTML, restores the case of SVG
+    // names (in SVG, or when closing an open element, which can only be in
+    // <svg>) and renames <image> to <img> (outside SVG and MathML)
+    const tagName = (name) => {
+      name = lowerCase(name, lowerCaseTags);
+      if (xmlMode || !lowerCaseTags) return name;
+      if (foreignContext != null) {
+        const svgName = SVG_TAG_NAMES.get(name);
+        if (foreignContext == "svg" || (svgName && openCounts[svgName])) {
+          return svgName ?? name;
+        }
+      }
+      return !foreignContext && name == "image" ? "img" : name;
     };
 
     const onOpenTag = (name, attribs) => {
-      if (xmlMode || !VOID_ELEMENTS.has(name)) {
-        push(name);
-        const context = foreignContextOf(name);
-        if (context != null) foreignContext.push(context);
-      }
-      emit("onopentag", name, attribs);
-      if (!xmlMode && VOID_ELEMENTS.has(name)) emit("onclosetag", name);
+      const isVoid = !xmlMode && VOID_ELEMENTS.has(name);
+      if (!isVoid) push(name);
+      handler?.onopentag?.(name, attribs);
+      if (isVoid) handler?.onclosetag?.(name);
     };
 
     const closeCurrentTag = (name) => {
-      if (stack.at(-1) === name) pop();
+      if (stack.at(-1) == name) pop();
     };
 
     const onCloseTag = (name) => {
-      name = lowerCase(name, lowerCaseTags);
-      if (foreignContextOf(name) != null) foreignContext.pop();
       const index = openCounts[name] ? stack.lastIndexOf(name) : -1;
       if (index >= 0) {
         while (stack.length > index) pop();
@@ -185,17 +212,36 @@ function Parser(handler, options = {}) {
       }
     };
 
-    const onInstruction = (prefix, value) =>
-      emit(
-        "onprocessinginstruction",
-        prefix + lowerCase(value.split(/[\s/]/)[0], lowerCaseTags),
-        prefix + value,
+    const onComment = (data) => handler?.oncomment?.(data);
+
+    // The name is the first word in XML, and "doctype" in HTML (the only
+    // declaration there)
+    const onInstruction = (prefix, value, data) =>
+      handler?.onprocessinginstruction?.(prefix +
+          lowerCase(
+            xmlMode ? value.split(/[\s/]/)[0] : value.slice(0, 7),
+            lowerCaseTags,
+          ),
+        prefix + data,
       );
 
     // Created per call because they keep state in lastIndex, and a callback
-    // can start another parse
+    // can start another parse. Tag names start with a letter in HTML, and
+    // with almost anything in XML (in start tags, not with "!" and "?", which
+    // start other markup).
+    const startNamePattern = `(${xmlMode ? "[^\\s/>!?]" : "[a-zA-Z]"}[^\\s/>]*)`;
+    const endNamePattern = `(${xmlMode ? "[^\\s/>]" : "[a-zA-Z]"}[^\\s/>]*)`;
+    const htmlOnly = xmlMode ? "(?!)" : "";
+    // Groups (the end groups are "" at the end of the input): 1 start tag
+    // name (first as the most common), 2 end tag name, 3 bogus comment after
+    // "</" (HTML), 4 comment, 5 its end ("-?>" right after "<!--" in HTML),
+    // 6 CDATA, 7 its end, 8 after "<!", 9 its end, 10 after "<?", 11 its end
+    // (XML)
     const TOKEN = htmlRegExp(
-      /<(?:\/[\s]*([^\s>]+)[^>]*>?|!--(.*?)(?:-->|$)|!\[CDATA\[(.*?)(?:]]>|$)|!(.[^>]*)>?|\?([^>]*)>?|([^\s/<>!?][^\s/>]*))/gis,
+      RegExp(
+        `<(?:${startNamePattern}|/${xmlMode ? "[\\s]*" : ""}${endNamePattern}[^>]*>?|${htmlOnly}/(?=[^])([^>]*)>?|!--(.*?)(--!?>|${htmlOnly}(?<=!--)-?>|$)|!\\[CDATA\\[(.*?)(]]>|$)|!(${xmlMode ? "-?>?" : ""}[^>]*)(>?)|\\?${xmlMode ? "(.*?)(\\?>|$)" : "([^>]*)()>?"})`,
+        "gs",
+      ),
     );
     const ATTRIBUTE = htmlRegExp(
       /([\s/]*)(?:>|([^\s/>][^\s/>=]*)(?:[\s]*=[\s]*(?:"([^"]*)"|'([^']*)'|(?!["'\s])([^\s>]*))|(?![\s]*=)))/y,
@@ -205,10 +251,12 @@ function Parser(handler, options = {}) {
     let start;
     let match;
 
-    const onText = (end) => {
+    // `raw`: raw text, which isn't decoded
+    const onText = (end, raw) => {
       if (end > index) {
         setPosition(index, end - 1);
-        emit("ontext", decoded(input.slice(index, end), false));
+        const text = input.slice(index, end);
+        handler?.ontext?.(raw ? text : decoded(text, false));
       }
     };
 
@@ -221,31 +269,25 @@ function Parser(handler, options = {}) {
       index = TOKEN.lastIndex;
       setPosition(start, index - 1);
 
-      const [, endTag, comment, cdata, declaration, instruction, startTag] =
-        match;
+      const [
+        ,
+        startTag,
+        endTag,
+        bogusEndTag,
+        comment,
+        commentEnd,
+        cdata,
+        cdataEnd,
+        declaration,
+        declarationEnd,
+        instruction,
+        instructionEnd,
+      ] = match;
 
-      if (comment != null) {
-        emit("oncomment", comment);
-      } else if (cdata != null) {
-        if (xmlMode || options.recognizeCDATA) {
-          emit("oncdatastart");
-          // The text is after "<![CDATA["
-          setPosition(start + 9, start + 8 + cdata.length);
-          emit("ontext", cdata);
-          setPosition(start, index - 1);
-          emit("oncdataend");
-        } else {
-          emit("oncomment", `[CDATA[${cdata}]]`);
-        }
-      } else if (!startTag) {
-        // Drop an unterminated end tag, declaration or processing
-        // instruction, it can only be at the end of the input
-        if (input[index - 1] != ">") break;
-        if (endTag) onCloseTag(endTag);
-        else if (declaration) onInstruction("!", declaration);
-        else onInstruction("?", instruction);
-      } else {
-        const name = lowerCase(startTag, lowerCaseTags);
+      if (startTag) {
+        const name = tagName(startTag);
+        const textOnly =
+          !xmlMode && !foreignContext && TEXT_ONLY.get(name.toLowerCase());
         const attribs = {};
 
         ATTRIBUTE.lastIndex = index;
@@ -263,6 +305,8 @@ function Parser(handler, options = {}) {
         if (!match) break;
 
         index = ATTRIBUTE.lastIndex;
+        // A <form> in another one is ignored
+        if (!xmlMode && name == "form" && openCounts.form) continue;
         if (!xmlMode) {
           // Elements closed implicitly by this tag end right before it
           setPosition(start, start - 1);
@@ -277,28 +321,71 @@ function Parser(handler, options = {}) {
         // of the element itself applies (`<svg/>` is self-closing), hence
         // this check comes after onOpenTag.
         const [, beforeEnd] = match;
+        const selfClosing = beforeEnd.includes("/");
         if (
-          beforeEnd.includes("/") &&
-          (xmlMode || options.recognizeSelfClosing || foreignContext.at(-1))
+          selfClosing &&
+          (xmlMode || options.recognizeSelfClosing || foreignContext)
         ) {
           closeCurrentTag(name);
         }
 
-        // The content of <script> and <style> is text
-        if (!xmlMode && SPECIAL_ELEMENTS.has(name.toLowerCase())) {
-          const end = htmlRegExp(RegExp(`</[\\s]*${name}[\\s>]`, "gi"));
-          end.lastIndex = index;
-          start = end.exec(input)?.index ?? input.length;
-          onText(start);
+        if (textOnly && !(selfClosing && options.recognizeSelfClosing)) {
+          const end = htmlRegExp(RegExp(`</${startTag}[\\s/>]|$`, "gi"));
+          end.lastIndex = textOnly > 2 ? input.length : index;
+          start = end.exec(input).index;
+          onText(start, textOnly > 1);
           index = start;
         }
+      } else if (comment != null) {
+        // A partial "--!>" at the end of the input isn't part of an HTML
+        // comment
+        onComment(
+          commentEnd || xmlMode ? comment : comment.replace(/-(-!?)?$/, ""),
+        );
+      } else if (cdata != null) {
+        if (xmlMode || (cdataEnd && options.recognizeCDATA)) {
+          if (cdataEnd || cdata) {
+            handler?.oncdatastart?.();
+            // The text is after "<![CDATA["
+            setPosition(start + 9, start + 8 + cdata.length);
+            handler?.ontext?.(cdata);
+            setPosition(start, index - 1);
+            handler?.oncdataend?.();
+          }
+        } else if (cdataEnd && foreignContext) {
+          handler?.ontext?.(cdata);
+        } else {
+          onComment(`[CDATA[${cdata}${cdataEnd && "]]"}`);
+        }
+      } else if (bogusEndTag != null) {
+        // "</>" is ignored
+        if (bogusEndTag) onComment(bogusEndTag);
+      } else if (instruction != null) {
+        if (!xmlMode) {
+          onComment(`?${instruction}`);
+        } else if (instructionEnd) {
+          // Unlike in htmlparser2, the data ends with "?", so that it's
+          // serialized back as it was
+          onInstruction("?", instruction, `${instruction}?`);
+        }
+      } else if (declaration != null) {
+        // In HTML, anything but DOCTYPE is a comment
+        if (!xmlMode && !/^doctype/i.test(declaration)) {
+          onComment(declaration);
+        } else if (declarationEnd) {
+          onInstruction("!", declaration, declaration);
+        }
+      } else if (endTag) {
+        // Drop an unterminated end tag, it can only be at the end of the
+        // input
+        if (input[index - 1] == ">") onCloseTag(tagName(endTag));
       }
     }
 
     // Elements still open end at the end of the input
     setPosition(input.length, input.length - 1);
     while (stack.length) pop();
-    emit("onend");
+    handler?.onend?.();
   };
 }
 
@@ -332,7 +419,12 @@ const parse = (markup, options = {}) => {
     {
       onopentag(name, attribs) {
         openElements.push(
-          addNode({ type: tagType(name), name, attribs, children: [] }),
+          addNode({
+            type: options.xmlMode ? "tag" : tagType(name),
+            name,
+            attribs,
+            children: [],
+          }),
         );
       },
       onclosetag: onClose,
@@ -404,10 +496,10 @@ const serialize = (dom, options = {}) => {
 
     if (isTag(node)) {
       let xml =
-        xmlMode == "foreign" && foreignContextOf(parent?.name) === false
+        xmlMode == "foreign" && FOREIGN_CONTEXTS.get(parent?.name) === false
           ? false
           : xmlMode;
-      if (!xml && foreignContextOf(name)) xml = "foreign";
+      if (!xml && FOREIGN_CONTEXTS.get(name)) xml = "foreign";
 
       output += `<${name}`;
       for (const key in attribs) {
@@ -432,11 +524,15 @@ const serialize = (dom, options = {}) => {
     } else if (type == "cdata") {
       output += `<![CDATA[${children[0].data}]]>`;
     } else if (data) {
-      // Only text that needs escaping is checked for being raw. "foreign"
-      // output is HTML too.
+      // Only text that needs escaping is checked for being raw, which it can
+      // be only in HTML (outside SVG and MathML). The names of the elements
+      // with raw text are shorter than 10 characters, so only that many are
+      // lowercased.
       const escaped = escape(data, textChars);
       output +=
-        escaped != data && isRawText(parent?.name, options.xmlMode === true)
+        escaped != data &&
+        !xmlMode &&
+        TEXT_ONLY.get(parent?.name?.slice(0, 10).toLowerCase()) > 1
           ? data
           : escaped;
     }
@@ -548,14 +644,15 @@ const create = (name, ...definitions) => {
     }
   }
 
-  const [tagName, ...classes] = name.split(".");
+  let [tagName, ...classes] = name.split(".");
+  tagName ||= "div";
   if (classes.length) {
     attribs.class = [attribs.class, ...classes].filter(Boolean).join(" ");
   }
 
   const node = {
-    type: tagType(tagName || "div"),
-    name: tagName || "div",
+    type: tagType(tagName),
+    name: tagName,
     attribs,
     children,
     parent: null,

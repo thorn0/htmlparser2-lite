@@ -25,6 +25,29 @@ const EVENTS = {
 // Events of htmlparser2 that are useful only for streaming, not emitted here
 const REMOVED_EVENTS = new Set(["opentagname", "attribute", "commentend"]);
 
+// The events in htmlparser2 12, whose parsing rules differ here
+const OVERRIDES = {
+  // "</" not followed by a letter starts a comment
+  "25-empty_tag_name.json": [
+    { event: "text", data: ["< >"] },
+    { event: "comment", data: [" "] },
+  ],
+  // So does "<!" not followed by "--", "[CDATA[" or "doctype"
+  "29-comment_edge-cases.json": [
+    { event: "comment", data: ["-foo"] },
+    { event: "comment", data: [" --- "] },
+    { event: "comment", data: ["foo"] },
+  ],
+  // Unterminated CDATA is a comment in HTML
+  "30-cdata_edge-cases.json": [
+    { event: "comment", data: ["[CDATA"] },
+    { event: "cdatastart", data: [] },
+    { event: "text", data: ["[]]sdaf"] },
+    { event: "cdataend", data: [] },
+    { event: "comment", data: ["[CDATA[foo"] },
+  ],
+};
+
 // Collects events, merging consecutive text events, like htmlparser2's
 // CollectingHandler with the test helper's reducer
 const collectEvents = (html, options) => {
@@ -50,7 +73,9 @@ describe("htmlparser2 events", () => {
       assert.deepEqual(
         // Attributes objects must be compared as plain objects
         JSON.parse(JSON.stringify(collectEvents(html, options.parser))),
-        expected.filter(({ event }) => !REMOVED_EVENTS.has(event)),
+        (OVERRIDES[file] ?? expected).filter(
+          ({ event }) => !REMOVED_EVENTS.has(event),
+        ),
       );
     });
   }

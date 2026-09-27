@@ -2,7 +2,7 @@ const fs = require("fs");
 const acorn = require("acorn");
 const UglifyJS = require("uglify-js");
 
-const MAX_SIZE = 7000;
+const MAX_SIZE = 8192;
 
 // The latest ES version fully supported by the browsers from the "browserslist"
 // query in package.json ("baseline widely available with downstream"). Only

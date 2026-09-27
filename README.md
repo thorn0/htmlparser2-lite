@@ -4,11 +4,12 @@
 [![npm bundle size (minified)](https://img.shields.io/bundlephobia/min/htmlparser2-lite.svg)](https://unpkg.com/htmlparser2-lite)
 [![npm bundle size (minified + gzip)](https://img.shields.io/bundlephobia/minzip/htmlparser2-lite.svg)](https://bundlephobia.com/result?p=htmlparser2-lite)
 
-> [Fast & forgiving HTML/XML parser](https://github.com/fb55/htmlparser2) for the browser, < 7 KB minified (3.4 KB gzipped), no dependencies
+> [Fast & forgiving HTML/XML parser](https://github.com/fb55/htmlparser2) for the browser, < 8 KB minified (4 KB gzipped), no dependencies
 
-A compact reimplementation of [`htmlparser2`](https://github.com/fb55/htmlparser2) 3.x and friends, compatible with them. It passes
-the [`htmlparser2`](https://github.com/fb55/htmlparser2/tree/v3.10.1/test/Events) and
-[`domhandler`](https://github.com/fb55/domhandler/tree/v2.4.2/test/cases) test suites (except for the unsupported features listed below).
+A compact reimplementation of [`htmlparser2`](https://github.com/fb55/htmlparser2) and friends: the API of `htmlparser2` 3.x with the
+[parsing rules](#parsing-rules) of `htmlparser2` 12. It passes the [`htmlparser2`](https://github.com/fb55/htmlparser2/tree/v3.10.1/test/Events)
+3.x and [`domhandler`](https://github.com/fb55/domhandler/tree/v2.4.2/test/cases) 2.x test suites, except for the unsupported features
+listed below and the cases where the parsing rules have changed since.
 
 ## Usage
 
@@ -35,10 +36,10 @@ Also works with `require("htmlparser2-lite")`, AMD, and as a `<script>` that def
 
 | Option                    | Default                                    | Effect                                                                                                          |
 | ------------------------- | ------------------------------------------ | --------------------------------------------------------------------------------------------------------------- |
-| `xmlMode`                 | `false`                                    | Parse XML: no raw text, void or implicitly closed elements, `/>` closes elements, CDATA sections are recognized |
+| `xmlMode`                 | `false`                                    | Parse XML: no text-only, void or implicitly closed elements, `/>` closes elements, CDATA sections are recognized, `<!x>` and `<?x?>` are directives |
 | `lowerCaseTags`           | `true` in HTML, `false` in XML             | Lowercase tag names                                                                                             |
 | `lowerCaseAttributeNames` | `true` in HTML, `false` in XML             | Lowercase attribute names                                                                                       |
-| `recognizeCDATA`          | `false` (always on in XML)                 | Parse CDATA sections as CDATA instead of comments                                                               |
+| `recognizeCDATA`          | `false` (always on in XML)                 | Parse CDATA sections as CDATA instead of comments (text in SVG and MathML)                                      |
 | `recognizeSelfClosing`    | `false` (always on in XML, SVG and MathML) | Close elements written as self-closing (`<x/>`)                                                                 |
 | `decodeEntities`          | `false`                                    | Decode character references, see [below](#decoding-character-references)                                        |
 
@@ -84,10 +85,9 @@ attribute values) gets encoded.
 
 ## Includes:
 
-- `Parser`: [`htmlparser2`](https://github.com/fb55/htmlparser2) 3.x's parser with the same events, options and parsing rules,
-  plus the additional implied end tags of [`@thorn0/htmlparser2`](https://www.npmjs.com/package/@thorn0/htmlparser2)
-  (e.g. `<p>` is closed by `<div>`, `<dt>` by `<dd>`)
-- `parse`: builds a DOM compatible with [`domhandler`](https://github.com/fb55/domhandler) 2.x
+- `Parser`: [`htmlparser2`](https://github.com/fb55/htmlparser2) 3.x's parser with the same events and options
+- `parse`: builds a DOM compatible with [`domhandler`](https://github.com/fb55/domhandler) 2.x (except that in XML mode, `<script>` and
+  `<style>` elements have the type `tag`, like in later versions)
 - `serialize`: [`dom-serializer`](https://github.com/cheeriojs/dom-serializer) with a fix for [#26](https://github.com/cheeriojs/dom-serializer/issues/26)
 - The most useful parts of [`domutils`](https://github.com/fb55/domutils)
 - A `create` utility function for simple DOM node creation
@@ -104,23 +104,37 @@ attribute values) gets encoded.
 - [Automatic fix-up](https://github.com/cheeriojs/dom-serializer/commit/78093e974872c5250922b07542095785ea4637e9) of mixed-case tag and attribute names.
   Set the `lowerCaseTags` and `lowerCaseAttributeNames` options of the parser to `false` to retain the casing.
 
-## Differences from `htmlparser2` 3.x:
+## Parsing rules
 
-- At the end of the input, an unterminated comment or CDATA section is kept, and any other unterminated markup is dropped. htmlparser2
-  handles these cases inconsistently, e.g. it drops `<!--`, but turns `<!doctype` into the text `doctype`.
+The parsing rules are those of `htmlparser2` 12, which follows the HTML spec more closely than 3.x did. Compared to 3.x, in HTML:
+
+- `<!-->` and `<!--->` are empty comments, and comments also end with `--!>`
+- `<!…>` (except for `<!doctype…>`), `<?…>`, and `</` followed by anything but a letter or `>` start comments ending at the next `>`
+  (e.g. `<?xml?>` is the comment `?xml?`). `</>` is ignored.
+- Tags start with a letter, so `<1>` is text
+- The content of `<title>`, `<textarea>` (decoded, see [`decodeEntities`](#decoding-character-references)), `<xmp>`, `<iframe>`,
+  `<noembed>`, `<noframes>` and `<plaintext>` (till the end of the input) is text, like that of `<script>` and `<style>`, but not in SVG or
+  MathML. With `recognizeSelfClosing`, `<script/>` etc. are empty.
+- `<![CDATA[…]]>` is text in SVG and MathML
+- Unterminated `<![CDATA[` is a comment till the end of the input
+- More elements are closed implicitly (e.g. `<p>` by `<div>`, `<dt>` by `<dd>`, `<td>` by `<th>`, `<thead>` by `<tbody>`)
+- A `<form>` in another one is ignored
+- SVG element names get their case (e.g. `clipPath`), and `<image>` outside SVG and MathML is `<img>`
+- An `<svg/>` closed by `/>` doesn't make `/>` close the elements after it
+
+## Differences from `htmlparser2` 12:
+
+- An unterminated tag at the end of the input, and in XML, an unterminated `<!…>` or `<?…?>` there, is dropped. htmlparser2 turns a part of
+  it into text in some cases, e.g. `</a b` into `b`, and in XML, `<?x` into `x`.
+- The data of an XML processing instruction includes the final `?` (e.g. `?xml version="1.0"?`), so that it's serialized as it was.
 - `startIndex` and `endIndex` are the exact range of each node's markup, and an element closed implicitly by a start tag ends right before
-  that tag. In htmlparser2, the ranges are off in some cases, e.g. for directives.
-- A script ends at the first `</script` followed by whitespace or `>`, a style at the first such `</style`. htmlparser2 misses it in some
-  cases, e.g. in `</s</script>`.
-- `<!->` is a declaration ending at its `>`. In htmlparser2, it continues to the next `>`.
+  that tag. In htmlparser2, the ranges are off in some cases.
 - Text between two tags comes in one `ontext` event. htmlparser2 can split it, e.g. at a `<` that doesn't start a tag.
-- The content of `<foreignObject>` in SVG is HTML (e.g. `/>` doesn't close elements there) whatever the case of the tag name. In
-  htmlparser2 (and dom-serializer), that's only with `lowerCaseTags: false`, because it compares the name case-sensitively.
 
 ## Performance
 
-On real-world pages, it parses about 1.3× (building a DOM) to 1.4× (events only) as fast as its predecessor, `htmlparser2-20kb`, and
-serializes about 1.2× as fast.
+On real-world pages, it parses about 1.3× as fast as its predecessor, `htmlparser2-20kb` (from about 0.9× on some large pages to 2.5× on
+feeds), and serializes about 1.1× as fast.
 
 Time grows linearly with the size of the input for any markup, so even malicious HTML can't make parsing hang, and elements can be nested
 arbitrarily deep. The same goes for `remove` and `create` when they get many nodes at once, so pass all the nodes to remove in one call
@@ -140,7 +154,7 @@ The code is ES2022, it targets [Baseline](https://web.dev/baseline) Widely avail
   `filterNodes(test, nodes, limit)`, and `filter(test, nodes, false)` with `nodes.filter(test)`.
 - Replace `parser.write(a); parser.write(b); parser.end()` with `parser.end(a + b)`, and `parser.parseComplete(html)` with
   `parser.end(html)`. Handle attributes in `onopentag` instead of `onattribute`.
-- See the differences listed above
+- See the [parsing rules](#parsing-rules), which have changed
 
 ## Size comparison
 

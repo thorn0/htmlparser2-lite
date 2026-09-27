@@ -173,10 +173,12 @@ export interface Handler {
 
 export interface ParserOptions {
   /**
-   * Parse XML (e.g. feeds) instead of HTML: the text of <script>, <style>,
-   * etc. isn't raw, elements like <br> aren't void, no elements are closed
-   * implicitly, `/>` closes elements, CDATA sections are recognized, names
-   * aren't lowercased by default.
+   * Parse XML (e.g. feeds) instead of HTML: the content of <script>, <title>,
+   * etc. isn't text only, elements like <br> aren't void, no elements are
+   * closed implicitly, `/>` closes elements, CDATA sections are recognized,
+   * `<!x>` and `<?x?>` are directives (not comments), names aren't lowercased
+   * by default, and `parse` gives <script> and <style> elements the type
+   * `tag`.
    *
    * Default: `false`
    */
@@ -198,16 +200,18 @@ export interface ParserOptions {
 
   /**
    * In HTML too, parse CDATA sections as CDATA (`oncdatastart`, `ontext`,
-   * `oncdataend`, `cdata` nodes) instead of comments. Always on in XML.
+   * `oncdataend`, `cdata` nodes) instead of comments (or text inside <svg>
+   * and <math>). Always on in XML.
    *
    * Default: `false`
    */
   recognizeCDATA?: boolean;
 
   /**
-   * In HTML too, close elements written as self-closing (`<x/>`). Always on in
-   * XML, and in HTML inside <svg> and <math> (but not inside elements like
-   * <foreignObject>, which contain HTML).
+   * In HTML too, close elements written as self-closing (`<x/>`), so that
+   * `<script/>`, `<title/>` etc. are empty. Always on in XML, and in HTML
+   * inside <svg> and <math> (but not inside elements like <foreignObject>,
+   * which contain HTML).
    *
    * Default: `false`
    */
@@ -217,7 +221,7 @@ export interface ParserOptions {
    * Decode character references like `&amp;` in text and attribute values
    * (not in comments, CDATA, and in HTML, not in the elements whose text is
    * raw: <script>, <style>, <xmp>, <iframe>, <noembed>, <noframes>,
-   * <plaintext>, <noscript>).
+   * <plaintext>).
    *
    * `true` in XML mode: the XML entities and numeric references.
    *
@@ -267,10 +271,12 @@ export interface SerializerOptions {
    * raw.
    *
    * `"foreign"`: output HTML as inside <svg> or <math>: elements without
-   * children self-close and attributes always get values, except inside
-   * elements like <foreignObject>, which contain HTML.
+   * children self-close, attributes always get values, no text is raw, except
+   * inside elements like <foreignObject>, which contain HTML.
    *
    * `false`: output HTML, switching to `"foreign"` inside <svg> and <math>.
+   * The text of <script>, <style> and the other elements whose text is raw
+   * isn't escaped.
    *
    * Default: `false`
    */

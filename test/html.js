@@ -51,10 +51,20 @@ describe("implied end tags", () => {
       "<table><thead><tr><td>a</td></tr><tbody><tr><td>b</table>",
       "<table><thead><tr><td>a</td></tr></thead><tbody><tr><td>b</td></tr></tbody></table>",
     ],
-    // Only the current element can be closed implicitly
+    // Closing the current element can make its parent the current one to
+    // close
     [
       "<table><thead><tr><td>a<tbody><tr><td>b</table>",
-      "<table><thead><tr><td>a<tbody><tr><td>b</td></tr></tbody></td></tr></thead></table>",
+      "<table><thead><tr><td>a</td></tr></thead><tbody><tr><td>b</td></tr></tbody></table>",
+    ],
+    // Only the current element can be closed implicitly
+    ["<p><b>a<div>b", "<p><b>a<div>b</div></b></p>"],
+    ["<p>a<h1>b<h2>c", "<p>a</p><h1>b</h1><h2>c</h2>"],
+    ["<td>a<th>b", "<td>a</td><th>b</th>"],
+    // A <form> in another one is ignored
+    [
+      "<form a><div><form b><input></form>c",
+      '<form a><div><input></div></form>c',
     ],
     [
       "<select><option>a<option>b<optgroup><option>c</select>",
@@ -101,10 +111,47 @@ describe("end tags", () => {
     assert.equal(roundTrip("a</p>b</br>", { xmlMode: true }), "ab");
   });
 
-  test("whitespace and garbage", () => {
-    assert.equal(roundTrip("<div>a</ div >b"), "<div>a</div>b");
+  test("anything after the name is ignored", () => {
     assert.equal(roundTrip("<div>a</div foo='>'>b"), "<div>a</div>'>b");
-    assert.equal(roundTrip("a</>b</ >c"), "a&lt;/>b&lt;/ >c");
+    assert.equal(roundTrip("<div>a</div/>b"), "<div>a</div>b");
+  });
+
+  test("in HTML, a comment if not starting with a letter, except </>", () => {
+    assert.deepEqual(tree(parse("<div>a</ div>b</1>c</>d")), [
+      [
+        "tag",
+        "div",
+        [
+          ["text", "a"],
+          ["comment", " div"],
+          ["text", "b"],
+          ["comment", "1"],
+          ["text", "cd"],
+        ],
+      ],
+    ]);
+    assert.deepEqual(
+      tree(parse("<div>a</ div>b</>c</!x>", { xmlMode: true })),
+      [
+        ["tag", "div", [["text", "a"]]],
+        ["text", "b</>c"],
+      ],
+    );
+  });
+
+  test("names get the case of SVG ones in SVG", () => {
+    assert.equal(
+      roundTrip("<svg><clippath><lineargradient/></CLIPPATH></svg>"),
+      "<svg><clipPath><linearGradient/></clipPath></svg>",
+    );
+    assert.equal(roundTrip("<clippath></clippath>"), "<clippath></clippath>");
+  });
+
+  test("<image> is <img> outside SVG and MathML", () => {
+    assert.equal(
+      roundTrip("<image><svg><image/></svg>"),
+      "<img><svg><image/></svg>",
+    );
   });
 });
 
@@ -142,15 +189,15 @@ describe("void and self-closing elements", () => {
     );
   });
 
-  test("HTML inside <foreignObject>, whatever the case of the name", () => {
+  test("HTML inside <foreignObject>", () => {
     assert.deepEqual(
-      tree(parse("<svg><foreignObject><div/>x</foreignObject><g/>y</svg>")),
+      tree(parse("<svg><foreignobject><div/>x</foreignObject><g/>y</svg>")),
       [
         [
           "tag",
           "svg",
           [
-            ["tag", "foreignobject", [["tag", "div", [["text", "x"]]]]],
+            ["tag", "foreignObject", [["tag", "div", [["text", "x"]]]]],
             ["tag", "g", []],
             ["text", "y"],
           ],
@@ -159,8 +206,19 @@ describe("void and self-closing elements", () => {
     );
     assert.equal(
       roundTrip('<svg><foreignObject><b c=""></b></foreignObject></svg>'),
-      "<svg><foreignobject><b c></b></foreignobject></svg>",
+      "<svg><foreignObject><b c></b></foreignObject></svg>",
     );
+    // Names are case-sensitive when not lowercased, like in htmlparser2
+    assert.equal(
+      roundTrip("<svg><foreignobject><b/></foreignobject></svg>", {
+        lowerCaseTags: false,
+      }),
+      "<svg><foreignobject><b/></foreignobject></svg>",
+    );
+    // <foreignObject> is only in SVG
+    assert.deepEqual(tree(parse("<math><foreignobject><b/>x</math>")), [
+      ["tag", "math", [["tag", "foreignobject", [["tag", "b", []], ["text", "x"]]]]],
+    ]);
   });
 
   test("the foreign context of the self-closing element itself counts", () => {
@@ -171,11 +229,10 @@ describe("void and self-closing elements", () => {
     assert.deepEqual(tree(parse("<svg><title/><b/>x</svg>")), [
       ["tag", "svg", [["tag", "title", [["tag", "b", [["text", "x"]]]]]]],
     ]);
-    // Like in htmlparser2, the foreign context of a self-closed <svg/> stays
+    // And it ends with it
     assert.deepEqual(tree(parse("<svg/><p/>x")), [
       ["tag", "svg", []],
-      ["tag", "p", []],
-      ["text", "x"],
+      ["tag", "p", [["text", "x"]]],
     ]);
   });
 
@@ -198,7 +255,7 @@ describe("void and self-closing elements", () => {
   });
 });
 
-describe("raw text elements", () => {
+describe("text-only elements", () => {
   test("script", () => {
     const html = '<script>if (a<b) x = "</div>" + "<!--";</script>c';
     assert.deepEqual(tree(parse(html)), [
@@ -215,32 +272,108 @@ describe("raw text elements", () => {
     ]);
   });
 
+  test("the end tag name ends with whitespace, / or >", () => {
+    assert.deepEqual(tree(parse("<script>a</scripts>b</script/><i>")), [
+      ["script", "script", [["text", "a</scripts>b"]]],
+      ["tag", "i", []],
+    ]);
+  });
+
+  test("the others", () => {
+    for (const name of "xmp iframe noembed noframes title textarea".split(" ")) {
+      assert.deepEqual(tree(parse(`<${name}><b>&amp;</${name}>`)), [
+        ["tag", name, [["text", "<b>&amp;"]]],
+      ]);
+    }
+    assert.deepEqual(tree(parse("<plaintext>a</plaintext>b")), [
+      ["tag", "plaintext", [["text", "a</plaintext>b"]]],
+    ]);
+  });
+
+  test("the text of <title> and <textarea> is decoded", () => {
+    const decodeEntities = (text) => text.replaceAll("&amp;", "&");
+    assert.deepEqual(
+      tree(parse("<title>&amp;</title><xmp>&amp;</xmp>", { decodeEntities })),
+      [
+        ["tag", "title", [["text", "&"]]],
+        ["tag", "xmp", [["text", "&amp;"]]],
+      ],
+    );
+  });
+
   test("unclosed", () => {
     assert.deepEqual(tree(parse("<script>a<b>c")), [
       ["script", "script", [["text", "a<b>c"]]],
     ]);
   });
 
+  test("not with recognizeSelfClosing if self-closing", () => {
+    assert.deepEqual(
+      tree(parse("<script/><b>x</b>", { recognizeSelfClosing: true })),
+      [
+        ["script", "script", []],
+        ["tag", "b", [["text", "x"]]],
+      ],
+    );
+  });
+
+  test("not in SVG and MathML", () => {
+    assert.deepEqual(tree(parse("<svg><style><b/></style></svg>")), [
+      ["tag", "svg", [["style", "style", [["tag", "b", []]]]]],
+    ]);
+    assert.deepEqual(
+      tree(parse("<svg><desc><style><b/></style></desc></svg>")),
+      [["tag", "svg", [["tag", "desc", [["style", "style", [["text", "<b/>"]]]]]]]],
+    );
+  });
+
   test("not in XML mode", () => {
     assert.deepEqual(
       tree(parse("<script><b>x</b></script>", { xmlMode: true })),
-      [["script", "script", [["tag", "b", [["text", "x"]]]]]],
+      [["tag", "script", [["tag", "b", [["text", "x"]]]]]],
     );
   });
 });
 
 describe("comments, CDATA, directives", () => {
   test("comments", () => {
-    assert.deepEqual(tree(parse("<!----><!-- a -- b --><!--->-->")), [
+    assert.deepEqual(tree(parse("<!----><!-- a -- b --><!-- c --!>")), [
       ["comment", ""],
       ["comment", " a -- b "],
-      ["comment", "->"],
+      ["comment", " c "],
+    ]);
+  });
+
+  test("<!--> and <!---> are empty comments in HTML", () => {
+    assert.deepEqual(tree(parse("<!-->a<!--->b-->")), [
+      ["comment", ""],
+      ["text", "a"],
+      ["comment", ""],
+      ["text", "b-->"],
+    ]);
+    assert.deepEqual(tree(parse("<!-->a-->", { xmlMode: true })), [
+      ["comment", ">a"],
+    ]);
+  });
+
+  test("other <! and <? are comments in HTML", () => {
+    assert.deepEqual(tree(parse("<!><!-a><!doc><?xml a?>")), [
+      ["comment", ""],
+      ["comment", "-a"],
+      ["comment", "doc"],
+      ["comment", "?xml a?"],
     ]);
   });
 
   test("CDATA is a comment in HTML", () => {
     assert.deepEqual(tree(parse("<![CDATA[a<b]]>")), [
       ["comment", "[CDATA[a<b]]"],
+    ]);
+  });
+
+  test("CDATA is text in SVG and MathML", () => {
+    assert.deepEqual(tree(parse("<svg>a<![CDATA[<b>]]></svg>")), [
+      ["tag", "svg", [["text", "a<b>"]]],
     ]);
   });
 
@@ -255,17 +388,23 @@ describe("comments, CDATA, directives", () => {
   });
 
   test("directives", () => {
+    const directives = (html, options) =>
+      parse(html, options).map(({ name, data }) => [name, data]);
+    assert.deepEqual(directives("<!DOCTYPE html><!doctypehtml>"), [
+      ["!doctype", "!DOCTYPE html"],
+      ["!doctype", "!doctypehtml"],
+    ]);
+    assert.equal(roundTrip("<!DOCTYPE html>"), "<!DOCTYPE html>");
     assert.deepEqual(
-      parse('<!DOCTYPE html><?xml version="1.0"?>').map(({ name, data }) => [
-        name,
-        data,
-      ]),
+      directives('<?xml version="1.0"?><!DOCTYPE x><?a >?>', { xmlMode: true }),
       [
-        ["!doctype", "!DOCTYPE html"],
         ["?xml", '?xml version="1.0"?'],
+        ["!DOCTYPE", "!DOCTYPE x"],
+        ["?a", "?a >?"],
       ],
     );
-    assert.equal(roundTrip("<!DOCTYPE html>"), "<!DOCTYPE html>");
+    const xml = '<?xml version="1.0"?><a/>';
+    assert.equal(roundTrip(xml, { xmlMode: true }, { xmlMode: true }), xml);
   });
 });
 
@@ -317,13 +456,31 @@ describe("the end of the input", () => {
     ["<div>a</div", "<div>a</div>"],
     ["a</br", "a"],
     ["a<!DOCTYPE html", "a"],
-    ["a<?xml", "a"],
+    ["a<!DOC", "a<!--DOC-->"],
+    ["a<?xml", "a<!--?xml-->"],
     ["a<", "a&lt;"],
     ["a</", "a&lt;/"],
+    ["a</ b", "a<!-- b-->"],
     ["a<!--b", "a<!--b-->"],
-    ["a<![CDATA[b", "a<!--[CDATA[b]]-->"],
+    // Possibly the start of "--!>"
+    ["a<!--b--!", "a<!--b-->"],
+    ["a<!--b-", "a<!--b-->"],
+    ["a<![CDATA[b", "a<!--[CDATA[b-->"],
   ]) {
     test(JSON.stringify(html), () => assert.equal(roundTrip(html), expected));
+  }
+
+  for (const [xml, expected] of [
+    ["a<?xml", "a"],
+    ["a<?xml?", "a"],
+    ["a<!DOCTYPE x", "a"],
+    ["a<!->", "a"],
+    ["a<!--b--!", "a<!--b--!-->"],
+    ["a<![CDATA[b", "a<![CDATA[b]]>"],
+  ]) {
+    test(`${JSON.stringify(xml)} in XML`, () =>
+      assert.equal(roundTrip(xml, { xmlMode: true }), expected),
+    );
   }
 
   test("unterminated start tag emits no events", () => {
@@ -616,6 +773,9 @@ describe("linear time", () => {
   fast("unmatched end tags in deeply nested elements", (n) =>
     parse("<a>".repeat(n) + "</x>".repeat(n)),
   );
+  fast("deeply nested elements with SVG names outside SVG", (n) =>
+    parse("<clippath>".repeat(n) + "</clippath>".repeat(n)),
+  );
   fast("normalizeWhitespace, text split by ignored end tags", (n) =>
     parse("a </x>".repeat(n), { normalizeWhitespace: true }),
   );
@@ -645,6 +805,9 @@ describe("linear time", () => {
   );
   fast("serialize(deeply nested elements)", (n) =>
     serialize(parse("<a>".repeat(n))),
+  );
+  fast("serialize(a long name, many text children to escape)", (n) =>
+    serialize(parse(`<${"x".repeat(n)}>` + "<1<!---->".repeat(n))),
   );
 });
 
