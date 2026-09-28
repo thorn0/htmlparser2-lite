@@ -69,30 +69,33 @@ const htmlRegExp = (source, flags) =>
 // set right before each use and read right after, before any callback, which
 // can start another parse.
 
-// The start and end tags in HTML and in XML, and the places where other
-// tokens can be (see OTHER_TOKENS): "<" followed by "!", "?" or "/". These
-// are split, so that the most common tokens get small results. Tag names
-// start with a letter in HTML, and with almost anything in XML (in start
-// tags, not with "!" and "?", which start other markup). Groups: 1 start tag
-// name, 2 what's before ">" if the tag ends right after its name (then the
-// attribute regex isn't needed), 3 end tag name.
-const TAGS = [false, true].map((xmlMode) =>
-  htmlRegExp(
-    `<(?:(${xmlMode ? "[^ />!?]" : "[a-zA-Z]"}[^ />]*)(?:([ /]*)>)?|/${xmlMode ? "[ ]*" : ""}(${xmlMode ? "[^ />]" : "[a-zA-Z]"}[^ />]*)[^>]*>?|(?=[!?/]))`,
-    "g",
-  ),
-);
-
-// The other tokens in HTML and in XML. Groups (the end groups are "" at the
-// end of the input): 1 bogus comment after "</" (HTML), 2 comment, 3 its end
-// ("-?>" right after "<!--" in HTML), 4 CDATA, 5 its end, 6 after "<!", 7 its
-// end, 8 after "<?", 9 its end (XML).
-const OTHER_TOKENS = [false, true].map((xmlMode) => {
+// The tokens in HTML and in XML, with two regular expressions for each, so
+// that the most common tokens get small results. Tag names start with a
+// letter in HTML, and with almost anything in XML (in start tags, not with "!"
+// and "?", which start other markup).
+//
+// The first one finds the start and end tags, and the places where other
+// tokens can be: "<" followed by "!", "?" or "/". Groups: 1 start tag name, 2
+// what's before ">" if the tag ends right after its name (then the attribute
+// regex isn't needed), 3 end tag name.
+//
+// The second one matches the other tokens there. Groups (the end groups are ""
+// at the end of the input): 1 bogus comment after "</" (HTML), 2 comment, 3
+// its end ("-?>" right after "<!--" in HTML), 4 CDATA, 5 its end, 6 after
+// "<!", 7 its end, 8 after "<?", 9 its end (XML). The first group of each
+// alternative is always there.
+const TOKENS = [false, true].map((xmlMode) => {
   const htmlOnly = xmlMode ? "(?!)" : "";
-  return htmlRegExp(
-    `<(?:${htmlOnly}/(?=[^])([^>]*)>?|!--(.*?)(--!?>|${htmlOnly}(?<=!--)-?>|$)|!\\[CDATA\\[(.*?)(]]>|$)|!(${xmlMode ? "-?>?" : ""}[^>]*)(>?)|\\?${xmlMode ? "(.*?)(\\?>|$)" : "([^>]*)()>?"})`,
-    "ys",
-  );
+  return [
+    htmlRegExp(
+      `<(?:(${xmlMode ? "[^ />!?]" : "[a-zA-Z]"}[^ />]*)(?:([ /]*)>)?|/${xmlMode ? "[ ]*" : ""}(${xmlMode ? "[^ />]" : "[a-zA-Z]"}[^ />]*)[^>]*>?|(?=[!?/]))`,
+      "g",
+    ),
+    htmlRegExp(
+      `<(?:${htmlOnly}/(?=[^])([^>]*)>?|!--(.*?)(--!?>|${htmlOnly}(?<=!--)-?>|$)|!\\[CDATA\\[(.*?)(]]>|$)|!(${xmlMode ? "-?>?" : ""}[^>]*)(>?)|\\?${xmlMode ? "(.*?)(\\?>|$)" : "([^>]*)()>?"})`,
+      "ys",
+    ),
+  ];
 });
 
 // An attribute or the end of a start tag. Groups: 1 what's before ">" at the
@@ -103,20 +106,16 @@ const ATTRIBUTE = htmlRegExp(
   "y",
 );
 
-// The end tags of the elements with text content (not <plaintext>, which has
-// none)
+// The end tags of the elements with text content (unused for <plaintext>,
+// which has none)
 const TEXT_END_TAGS = new Map(
-  [...TEXT_ONLY]
-    .filter(([, kind]) => kind < 3)
-    .map(([name]) => [name, htmlRegExp(`</${name}[ />]`, "gi")]),
+  [...TEXT_ONLY.keys()].map((name) => [name, htmlRegExp(`</${name}[ />]`, "gi")]),
 );
 
 const tagType = (name) =>
   name == "script" || name == "style" ? name : "tag";
 
-const TAG_TYPES = words("tag script style");
-
-const isTag = (node) => TAG_TYPES.has(node.type);
+const isTag = ({ type }) => type == "tag" || type == "script" || type == "style";
 
 const lowerCase = (str, enabled) => (enabled ? str.toLowerCase() : str);
 
@@ -180,116 +179,141 @@ const createBrowserDecoder = () => {
     );
 };
 
-function Parser(handler, options = {}) {
-  const parser = this;
-  parser.startIndex = parser.endIndex = 0;
-
-  parser.end = (input = "") => {
-    const { xmlMode, decodeEntities, recognizeSelfClosing, recognizeCDATA } =
-      options;
-    const lowerCaseTags = options.lowerCaseTags ?? !xmlMode;
-    const lowerCaseAttributeNames = options.lowerCaseAttributeNames ?? !xmlMode;
-
-    const decode =
+// A call of Parser#end: its state and the operations on it. Each call has its
+// own, so that callbacks can start other parses, with the same Parser too.
+// Underscored properties are internal, the build shortens their names. Some
+// methods use `state` for `this`, which is shorter when minified.
+class Parse {
+  constructor(parser, handler, options) {
+    const state = this;
+    const { xmlMode, decodeEntities } = options;
+    state._parser = parser;
+    // Callbacks are optional, the handler too
+    state._handler = handler ?? {};
+    state._xmlMode = xmlMode;
+    state._lowerCaseTags = options.lowerCaseTags ?? !xmlMode;
+    state._decode =
       typeof decodeEntities == "function"
         ? decodeEntities
         : decodeEntities && (xmlMode ? decodeXML : createBrowserDecoder());
-    const decoded = (text, inAttribute) =>
-      decode && text.includes("&") ? decode(text, inAttribute) : text;
-
-    const stack = [];
+    state._stack = [];
     // Numbers of open elements by name, so that end tags matching no open
     // element don't search the stack
-    const openCounts = { __proto__: null };
-    // The foreign context of the content of the current element: "svg",
-    // "math", false for HTML inside those, undefined outside; and those of
-    // its ancestors
-    let foreignContext;
-    const foreignContexts = [];
+    state._openCounts = { __proto__: null };
+    // The foreign contexts of the ancestors of the current element's
+    // content. Its own, _foreignContext ("svg", "math", false for HTML inside
+    // those, undefined outside), is set with the first element.
+    state._foreignContexts = [];
+  }
 
-    const setPosition = (start, end) => {
-      parser.startIndex = start;
-      parser.endIndex = end;
-    };
+  _decoded(text, inAttribute) {
+    const decode = this._decode;
+    return decode && text.includes("&") ? decode(text, inAttribute) : text;
+  }
 
-    const push = (name) => {
-      stack.push(name);
+  _setPosition(start, end) {
+    const parser = this._parser;
+    parser.startIndex = start;
+    parser.endIndex = end;
+  }
+
+  _pop() {
+    const state = this;
+    const name = state._stack.pop();
+    state._openCounts[name]--;
+    state._foreignContext = state._foreignContexts.pop();
+    state._handler.onclosetag?.(name);
+  }
+
+  // Lowercases the name (if enabled) and, in HTML, restores the case of SVG
+  // names (in SVG, or when closing an open element, which can only be in
+  // <svg>) and renames <image> to <img> (outside SVG and MathML)
+  _tagName(name) {
+    const state = this;
+    const lowerCaseTags = state._lowerCaseTags;
+    name = lowerCase(name, lowerCaseTags);
+    if (state._xmlMode || !lowerCaseTags) return name;
+    const foreignContext = state._foreignContext;
+    if (foreignContext != null) {
+      const svgName = SVG_TAG_NAMES.get(name);
+      if (foreignContext == "svg" || (svgName && state._openCounts[svgName])) {
+        return svgName ?? name;
+      }
+    }
+    return !foreignContext && name == "image" ? "img" : name;
+  }
+
+  _openTag(name, attribs) {
+    const state = this;
+    const isVoid = !state._xmlMode && VOID_ELEMENTS.has(name);
+    if (!isVoid) {
+      const openCounts = state._openCounts;
+      state._stack.push(name);
       openCounts[name] = (openCounts[name] | 0) + 1;
-      foreignContexts.push(foreignContext);
-      foreignContext = FOREIGN_CONTEXTS.get(name) ?? foreignContext;
-    };
+      state._foreignContexts.push(state._foreignContext);
+      state._foreignContext =
+        FOREIGN_CONTEXTS.get(name) ?? state._foreignContext;
+    }
+    state._handler.onopentag?.(name, attribs);
+    if (isVoid) state._handler.onclosetag?.(name);
+  }
 
-    const pop = () => {
-      const name = stack.pop();
-      openCounts[name]--;
-      foreignContext = foreignContexts.pop();
-      handler?.onclosetag?.(name);
-    };
+  _closeCurrentTag(name) {
+    if (this._stack.at(-1) == name) this._pop();
+  }
 
-    // Lowercases the name (if enabled) and, in HTML, restores the case of SVG
-    // names (in SVG, or when closing an open element, which can only be in
-    // <svg>) and renames <image> to <img> (outside SVG and MathML)
-    const tagName = (name) => {
-      name = lowerCase(name, lowerCaseTags);
-      if (xmlMode || !lowerCaseTags) return name;
-      if (foreignContext != null) {
-        const svgName = SVG_TAG_NAMES.get(name);
-        if (foreignContext == "svg" || (svgName && openCounts[svgName])) {
-          return svgName ?? name;
-        }
-      }
-      return !foreignContext && name == "image" ? "img" : name;
-    };
+  _closeTag(name) {
+    const state = this;
+    const stack = state._stack;
+    const index = state._openCounts[name] ? stack.lastIndexOf(name) : -1;
+    if (index >= 0) {
+      while (stack.length > index) state._pop();
+    } else if (!state._xmlMode && (name == "p" || name == "br")) {
+      state._openTag(name, {});
+      state._closeCurrentTag(name);
+    }
+  }
 
-    const onOpenTag = (name, attribs) => {
-      const isVoid = !xmlMode && VOID_ELEMENTS.has(name);
-      if (!isVoid) push(name);
-      handler?.onopentag?.(name, attribs);
-      if (isVoid) handler?.onclosetag?.(name);
-    };
+  _comment(data) {
+    this._handler.oncomment?.(data);
+  }
 
-    const closeCurrentTag = (name) => {
-      if (stack.at(-1) == name) pop();
-    };
+  // The name is the first word in XML, and "doctype" in HTML (the only
+  // declaration there)
+  _instruction(prefix, value, data) {
+    this._handler.onprocessinginstruction?.(
+      prefix +
+        lowerCase(
+          this._xmlMode ? value.split(/[\s/]/)[0] : value.slice(0, 7),
+          this._lowerCaseTags,
+        ),
+      prefix + data,
+    );
+  }
 
-    const onCloseTag = (name) => {
-      const index = openCounts[name] ? stack.lastIndexOf(name) : -1;
-      if (index >= 0) {
-        while (stack.length > index) pop();
-      } else if (!xmlMode && (name == "p" || name == "br")) {
-        onOpenTag(name, {});
-        closeCurrentTag(name);
-      }
-    };
+  // The text of the input from `start` to `end`, `raw` if it isn't decoded
+  _text(input, start, end, raw) {
+    if (end > start) {
+      this._setPosition(start, end - 1);
+      const text = input.slice(start, end);
+      this._handler.ontext?.(raw ? text : this._decoded(text, false));
+    }
+  }
 
-    const onComment = (data) => handler?.oncomment?.(data);
+  _run(input, options) {
+    const state = this;
+    const handler = state._handler;
+    const xmlMode = state._xmlMode;
+    const lowerCaseTags = state._lowerCaseTags;
+    const { recognizeSelfClosing, recognizeCDATA } = options;
+    const lowerCaseAttributeNames = options.lowerCaseAttributeNames ?? !xmlMode;
+    const stack = state._stack;
+    const [TAG, OTHER_TOKEN] = TOKENS[xmlMode ? 1 : 0];
 
-    // The name is the first word in XML, and "doctype" in HTML (the only
-    // declaration there)
-    const onInstruction = (prefix, value, data) =>
-      handler?.onprocessinginstruction?.(prefix +
-          lowerCase(
-            xmlMode ? value.split(/[\s/]/)[0] : value.slice(0, 7),
-            lowerCaseTags,
-          ),
-        prefix + data,
-      );
-
-    const TAG = TAGS[xmlMode ? 1 : 0];
-    const OTHER_TOKEN = OTHER_TOKENS[xmlMode ? 1 : 0];
-
+    // The start of the text not emitted yet
     let index = 0;
     let start;
     let match;
-
-    // `raw`: raw text, which isn't decoded
-    const onText = (end, raw) => {
-      if (end > index) {
-        setPosition(index, end - 1);
-        const text = input.slice(index, end);
-        handler?.ontext?.(raw ? text : decoded(text, false));
-      }
-    };
 
     for (;;) {
       // The next tag, or other token after "<!", "<?" or "</"
@@ -303,83 +327,21 @@ function Parser(handler, options = {}) {
       }
       const tokenEnd = other ? OTHER_TOKEN.lastIndex : TAG.lastIndex;
       start = match?.index ?? input.length;
-      onText(start);
+      state._text(input, index, start);
       if (!match) break;
       index = tokenEnd;
-      setPosition(start, index - 1);
+      state._setPosition(start, index - 1);
 
       const [, startTag, startTagEnd, endTag] = match;
 
-      if (startTag) {
-        const name = tagName(startTag);
-        // Text-only names aren't changed by tagName, except for lowercasing
-        const textOnlyName = lowerCaseTags ? name : name.toLowerCase();
-        const textOnly =
-          !xmlMode && !foreignContext && TEXT_ONLY.get(textOnlyName);
-        const attribs = {};
-
-        // The whitespace and slashes before ">"
-        let beforeEnd = startTagEnd;
-        while (beforeEnd == null) {
-          ATTRIBUTE.lastIndex = index;
-          match = ATTRIBUTE.exec(input);
-          if (!match) break;
-          index = ATTRIBUTE.lastIndex;
-          const [, before, rawKey, doubleQuoted, singleQuoted, unquoted, after] =
-            match;
-          // The end of the tag
-          if (!rawKey) {
-            beforeEnd = before;
-            break;
-          }
-          const key = lowerCase(rawKey, lowerCaseAttributeNames);
-          if (!Object.hasOwn(attribs, key)) {
-            attribs[key] = decoded(
-              doubleQuoted ?? singleQuoted ?? unquoted ?? "",
-              true,
-            );
-          }
-          // The end of the tag right after the attribute
-          beforeEnd = after;
-        }
-        // Unterminated tag at the end of the input, drop it
-        if (beforeEnd == null) break;
-
-        // A <form> in another one is ignored
-        if (!xmlMode && name == "form" && openCounts.form) continue;
-        if (!xmlMode) {
-          // Elements closed implicitly by this tag end right before it
-          setPosition(start, start - 1);
-          while (IMPLIED_CLOSE.get(name)?.has(stack.at(-1))) pop();
-        }
-        setPosition(start, index - 1);
-
-        onOpenTag(name, attribs);
-
-        // Only whitespace and slashes can be before ">", so if there is a
-        // slash, it's the last non-whitespace character. The foreign context
-        // of the element itself applies (`<svg/>` is self-closing), hence
-        // this check comes after onOpenTag.
-        const selfClosing = beforeEnd.includes("/");
-        if (selfClosing && (xmlMode || recognizeSelfClosing || foreignContext)) {
-          closeCurrentTag(name);
-        }
-
-        if (textOnly && !(selfClosing && recognizeSelfClosing)) {
-          start = input.length;
-          if (textOnly < 3) {
-            const endTag = TEXT_END_TAGS.get(textOnlyName);
-            endTag.lastIndex = index;
-            start = endTag.exec(input)?.index ?? start;
-          }
-          onText(start, textOnly > 1);
-          index = start;
-        }
-      } else if (endTag) {
+      if (endTag) {
         // Drop an unterminated end tag, it can only be at the end of the
         // input
-        if (input[index - 1] == ">") onCloseTag(tagName(endTag));
-      } else {
+        if (input[index - 1] == ">") state._closeTag(state._tagName(endTag));
+        continue;
+      }
+
+      if (!startTag) {
         const [
           ,
           bogusEndTag,
@@ -394,142 +356,240 @@ function Parser(handler, options = {}) {
         ] = other;
 
         if (comment != null) {
-        // A partial "--!>" at the end of the input isn't part of an HTML
-        // comment
-        onComment(
-          commentEnd || xmlMode ? comment : comment.replace(/-(-!?)?$/, ""),
-        );
-      } else if (cdata != null) {
-        if (xmlMode || (cdataEnd && recognizeCDATA)) {
-          if (cdataEnd || cdata) {
-            handler?.oncdatastart?.();
-            // The text is after "<![CDATA["
-            setPosition(start + 9, start + 8 + cdata.length);
-            handler?.ontext?.(cdata);
-            setPosition(start, index - 1);
-            handler?.oncdataend?.();
+          // A partial "--!>" at the end of the input isn't part of an HTML
+          // comment
+          state._comment(
+            commentEnd || xmlMode ? comment : comment.replace(/-(-!?)?$/, ""),
+          );
+        } else if (cdata != null) {
+          if (xmlMode || (cdataEnd && recognizeCDATA)) {
+            if (cdataEnd || cdata) {
+              handler.oncdatastart?.();
+              // The text is after "<![CDATA["
+              state._setPosition(start + 9, start + 8 + cdata.length);
+              handler.ontext?.(cdata);
+              state._setPosition(start, index - 1);
+              handler.oncdataend?.();
+            }
+          } else if (cdataEnd && state._foreignContext) {
+            handler.ontext?.(cdata);
+          } else {
+            state._comment(`[CDATA[${cdata}${cdataEnd && "]]"}`);
           }
-        } else if (cdataEnd && foreignContext) {
-          handler?.ontext?.(cdata);
-        } else {
-          onComment(`[CDATA[${cdata}${cdataEnd && "]]"}`);
-        }
-      } else if (bogusEndTag != null) {
-        // "</>" is ignored
-        if (bogusEndTag) onComment(bogusEndTag);
-      } else if (instruction != null) {
-        if (!xmlMode) {
-          onComment(`?${instruction}`);
-        } else if (instructionEnd) {
-          // Unlike in htmlparser2, the data ends with "?", so that it's
-          // serialized back as it was
-          onInstruction("?", instruction, `${instruction}?`);
-        }
-      } else if (declaration != null) {
-        // In HTML, anything but DOCTYPE is a comment
-        if (!xmlMode && !/^doctype/i.test(declaration)) {
-          onComment(declaration);
+        } else if (bogusEndTag != null) {
+          // "</>" is ignored
+          if (bogusEndTag) state._comment(bogusEndTag);
+        } else if (instruction != null) {
+          if (!xmlMode) {
+            state._comment(`?${instruction}`);
+          } else if (instructionEnd) {
+            // Unlike in htmlparser2, the data ends with "?", so that it's
+            // serialized back as it was
+            state._instruction("?", instruction, `${instruction}?`);
+          }
+        } else if (!xmlMode && !/^doctype/i.test(declaration)) {
+          // A declaration: in HTML, anything but DOCTYPE is a comment
+          state._comment(declaration);
         } else if (declarationEnd) {
-          onInstruction("!", declaration, declaration);
+          state._instruction("!", declaration, declaration);
         }
+        continue;
       }
+
+      const name = state._tagName(startTag);
+      // Text-only names aren't changed by _tagName, except for lowercasing
+      const textOnlyName = lowerCase(name, !lowerCaseTags);
+      const textOnly =
+        !xmlMode && !state._foreignContext && TEXT_ONLY.get(textOnlyName);
+      const attribs = {};
+
+      // The whitespace and slashes before ">", once the tag ends
+      let beforeEnd = startTagEnd;
+      while (beforeEnd == null) {
+        ATTRIBUTE.lastIndex = index;
+        match = ATTRIBUTE.exec(input);
+        if (!match) break;
+        index = ATTRIBUTE.lastIndex;
+        const [, before, rawKey, doubleQuoted, singleQuoted, unquoted, after] =
+          match;
+        if (rawKey) {
+          const key = lowerCase(rawKey, lowerCaseAttributeNames);
+          if (!Object.hasOwn(attribs, key)) {
+            attribs[key] = state._decoded(
+              doubleQuoted ?? singleQuoted ?? unquoted ?? "",
+              true,
+            );
+          }
+        }
+        beforeEnd = rawKey ? after : before;
+      }
+      // Unterminated tag at the end of the input, drop it
+      if (beforeEnd == null) break;
+
+      // A <form> in another one is ignored
+      if (!xmlMode && name == "form" && state._openCounts.form) continue;
+      if (!xmlMode) {
+        // Elements closed implicitly by this tag end right before it
+        state._setPosition(start, start - 1);
+        while (IMPLIED_CLOSE.get(name)?.has(stack.at(-1))) state._pop();
+      }
+      state._setPosition(start, index - 1);
+
+      state._openTag(name, attribs);
+
+      // Only whitespace and slashes can be before ">", so if there is a
+      // slash, it's the last non-whitespace character. The foreign context of
+      // the element itself applies (`<svg/>` is self-closing), hence this
+      // check comes after _openTag.
+      const selfClosing = beforeEnd.includes("/");
+      if (
+        selfClosing &&
+        (xmlMode || recognizeSelfClosing || state._foreignContext)
+      ) {
+        state._closeCurrentTag(name);
+      }
+
+      if (textOnly && !(selfClosing && recognizeSelfClosing)) {
+        start = input.length;
+        if (textOnly < 3) {
+          const endTagRegExp = TEXT_END_TAGS.get(textOnlyName);
+          endTagRegExp.lastIndex = index;
+          start = endTagRegExp.exec(input)?.index ?? start;
+        }
+        state._text(input, index, start, textOnly > 1);
+        index = start;
       }
     }
 
     // Elements still open end at the end of the input
-    setPosition(input.length, input.length - 1);
-    while (stack.length) pop();
-    handler?.onend?.();
-  };
+    state._setPosition(input.length, input.length - 1);
+    while (stack.length) state._pop();
+    handler.onend?.();
+  }
 }
 
-const parse = (markup, options = {}) => {
-  const { xmlMode, normalizeWhitespace, withStartIndices, withEndIndices } =
-    options;
-  const dom = [];
-  const openElements = [];
-  // Whether the last text node, the only one text can be appended to, ends
-  // with a space (when normalizing whitespace)
-  let endsWithSpace;
+function Parser(handler, options = {}) {
+  this.startIndex = this.endIndex = 0;
+  this.end = (input = "") =>
+    new Parse(this, handler, options)._run(input, options);
+}
 
-  // The parent and the previous sibling of the next node
-  let parent;
-  let siblings;
-  let prev;
-  const locate = () => {
-    parent = openElements.at(-1) ?? null;
-    siblings = parent?.children ?? dom;
-    prev = siblings.at(-1) ?? null;
-  };
+// Nodes are created with all their properties, so that they share shapes
+// (except for the indices added with withStartIndices and withEndIndices)
+const elementNode = (type, name, attribs, children) => ({
+  type,
+  name,
+  attribs,
+  children,
+  parent: null,
+  prev: null,
+  next: null,
+});
 
-  const addNode = (node) => {
+const dataNode = (type, data) => ({
+  type,
+  data,
+  parent: null,
+  prev: null,
+  next: null,
+});
+
+// The handler of the parse in `parse`, which builds the DOM. It's also where
+// the parse writes the positions.
+class DomBuilder {
+  constructor(options) {
+    const builder = this;
+    builder.startIndex = builder.endIndex = 0;
+    builder._xmlMode = options.xmlMode;
+    builder._normalizeWhitespace = options.normalizeWhitespace;
+    builder._withStartIndices = options.withStartIndices;
+    builder._withEndIndices = options.withEndIndices;
+    builder._dom = [];
+    // The element whose content is being parsed, null at the top
+    builder._current = null;
+  }
+
+  _add(node) {
+    const builder = this;
+    const parent = builder._current;
+    const siblings = parent?.children ?? builder._dom;
+    const prev = siblings.at(-1) ?? null;
+    node.parent = parent;
+    node.prev = prev;
     if (prev) prev.next = node;
-    if (withStartIndices) node.startIndex = parser.startIndex;
-    if (withEndIndices) node.endIndex = parser.endIndex;
+    if (builder._withStartIndices) node.startIndex = builder.startIndex;
+    if (builder._withEndIndices) node.endIndex = builder.endIndex;
     siblings.push(node);
-    return node;
-  };
+    // An element or CDATA section is open now
+    if (node.children) builder._current = node;
+  }
 
-  const onClose = () => {
-    const element = openElements.pop();
-    if (withEndIndices) element.endIndex = parser.endIndex;
-  };
+  onopentag(name, attribs) {
+    this._add(
+      elementNode(this._xmlMode ? "tag" : tagType(name), name, attribs, []),
+    );
+  }
 
-  const parser = new Parser(
-    {
-      onopentag(name, attribs) {
-        locate();
-        openElements.push(
-          addNode({
-            type: xmlMode ? "tag" : tagType(name),
-            name,
-            attribs,
-            children: [],
-            parent,
-            prev,
-            next: null,
-          }),
-        );
-      },
-      onclosetag: onClose,
-      oncdatastart() {
-        locate();
-        openElements.push(
-          addNode({ type: "cdata", children: [], parent, prev, next: null }),
-        );
-      },
-      oncdataend: onClose,
-      ontext(data) {
-        locate();
-        const append = prev?.type == "text";
-        // Only the new text is normalized, and the existing text isn't even
-        // read, so that appending many pieces takes linear time
-        if (normalizeWhitespace) {
-          data = data.replace(/\s+/g, " ");
-          if (append && endsWithSpace && data[0] == " ") data = data.slice(1);
-          if (data || !append) endsWithSpace = data.at(-1) == " ";
-        }
-        if (append) {
-          prev.data += data;
-          if (withEndIndices) prev.endIndex = parser.endIndex;
-        } else {
-          addNode({ type: "text", data, parent, prev, next: null });
-        }
-      },
-      oncomment(data) {
-        locate();
-        addNode({ type: "comment", data, parent, prev, next: null });
-      },
-      onprocessinginstruction(name, data) {
-        locate();
-        addNode({ type: "directive", name, data, parent, prev, next: null });
-      },
-    },
-    options,
-  );
+  onclosetag() {
+    const element = this._current;
+    if (this._withEndIndices) element.endIndex = this.endIndex;
+    this._current = element.parent;
+  }
 
-  parser.end(markup);
-  return dom;
+  oncdatastart() {
+    this._add({
+      type: "cdata",
+      children: [],
+      parent: null,
+      prev: null,
+      next: null,
+    });
+  }
+
+  oncdataend() {
+    this.onclosetag();
+  }
+
+  ontext(data) {
+    const builder = this;
+    const prev = (builder._current?.children ?? builder._dom).at(-1);
+    const append = prev?.type == "text";
+    // Only the new text is normalized, and the existing text isn't even
+    // read, so that appending many pieces takes linear time. Whether the
+    // last text node ends with a space is remembered.
+    if (builder._normalizeWhitespace) {
+      data = data.replace(/\s+/g, " ");
+      if (append && builder._endsWithSpace && data[0] == " ") data = data.slice(1);
+      if (data || !append) builder._endsWithSpace = data.at(-1) == " ";
+    }
+    if (append) {
+      prev.data += data;
+      if (builder._withEndIndices) prev.endIndex = builder.endIndex;
+    } else {
+      builder._add(dataNode("text", data));
+    }
+  }
+
+  oncomment(data) {
+    this._add(dataNode("comment", data));
+  }
+
+  onprocessinginstruction(name, data) {
+    this._add({
+      type: "directive",
+      name,
+      data,
+      parent: null,
+      prev: null,
+      next: null,
+    });
+  }
+}
+
+const parse = (markup = "", options = {}) => {
+  const builder = new DomBuilder(options);
+  new Parse(builder, builder, options)._run(markup, options);
+  return builder._dom;
 };
 
 // The characters to escape in text and in attribute values, and the mode bits
@@ -558,7 +618,7 @@ const serialize = (dom, options = {}) => {
 
   // The given nodes are written as in the whole DOM: the nearest ancestor
   // with a foreign context decides. The modes found for the ancestors on
-  // the way are remembered, so that each is visited once.
+  // the way are remembered for the next nodes, so that each is visited once.
   const nodes = Array.isArray(dom) ? dom : [dom];
   let ancestorModes;
   for (let i = nodes.length; i--; ) {
@@ -572,7 +632,7 @@ const serialize = (dom, options = {}) => {
       (context = FOREIGN_CONTEXTS.get(ancestor.name)) == null
     );
     mode ??= inContext(xmlMode == "foreign" ? 1 : xmlMode ? 2 : 0, context);
-    for (let next = node.parent; next != ancestor; next = next.parent) {
+    for (let next = node.parent; i && next != ancestor; next = next.parent) {
       (ancestorModes ??= new Map()).set(next, mode);
     }
     stack.push(node);
@@ -727,7 +787,7 @@ const create = (name, ...definitions) => {
   for (const definition of definitions.flat(Infinity)) {
     if (!definition) continue;
     if (typeof definition == "string") {
-      children.push({ type: "text", data: definition });
+      children.push(dataNode("text", definition));
     } else if (typeof definition == "object") {
       const { type } = definition;
       if (
@@ -748,15 +808,7 @@ const create = (name, ...definitions) => {
     attribs.class = [attribs.class, ...classes].filter(Boolean).join(" ");
   }
 
-  const node = {
-    type: tagType(tagName),
-    name: tagName,
-    attribs,
-    children,
-    parent: null,
-    prev: null,
-    next: null,
-  };
+  const node = elementNode(tagType(tagName), tagName, attribs, children);
 
   remove(children);
   children.forEach((child, i) => {

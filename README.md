@@ -137,10 +137,9 @@ The parsing rules are those of `htmlparser2` 12, which follows the HTML spec mor
 
 ## Performance
 
-On real-world pages, it builds a DOM about 1.4× as fast as its predecessor, `htmlparser2-20kb` (from about 1.05× on some large pages to
+On real-world pages, it builds a DOM about 1.5× as fast as its predecessor, `htmlparser2-20kb` (from about 1.1× on some large pages to
 3× on feeds), parses events only about 1.7× as fast, and serializes about 1.4× as fast. Markup with many tags and little text, like
-templates, parses about as fast (1.0× to 1.05×), and inputs of a few dozen characters parse slower (0.5× to 0.95×), because of a higher
-fixed cost per call.
+templates, parses about 1.1× to 1.2× as fast.
 
 Time grows linearly with the size of the input for any markup, so even malicious HTML can't make parsing hang, and elements can be nested
 arbitrarily deep. The same goes for `remove` and `create` when they get many nodes at once, so pass all the nodes to remove in one call

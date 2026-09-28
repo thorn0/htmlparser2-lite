@@ -738,23 +738,25 @@ describe("Parser", () => {
 
   test("reentrancy in the middle of a tag and of raw text", () => {
     // Parses markup like the one being parsed, in the middle of it
-    const nested = (text) => {
+    const parseMore = (text) => {
       parse(`<x a=1 b='2'><script>a</script></x>`);
       parse(`<x a="1" c>`, { xmlMode: true });
       return text;
     };
     const html = '<a x="&1" y="&2" z=3><script>a</b></script><b c="&3">d</b></a>';
-    const expected = serialize(parse(html));
-    const dom = parse(html, { decodeEntities: nested });
+    const dom = parse(html, { decodeEntities: parseMore });
     assert.deepEqual(dom[0].attribs, { x: "&1", y: "&2", z: "3" });
-    assert.equal(serialize(dom), expected);
+    assert.equal(serialize(dom), roundTrip(html));
     const texts = [];
-    new Parser({
+    const parser = new Parser({
       ontext(text) {
-        texts.push(nested(text));
+        texts.push(parseMore(text));
+        // Also with the same parser
+        if (text == "b") parser.end("<i>x</i>");
       },
-    }).end("a<b c=1>b<script>c</d></script>e</b>");
-    assert.deepEqual(texts, ["a", "b", "c</d>", "e"]);
+    });
+    parser.end("a<b c=1>b<script>c</d></script>e</b>");
+    assert.deepEqual(texts, ["a", "b", "x", "c</d>", "e"]);
   });
 
   test("each end call parses its input separately", () => {
@@ -784,9 +786,7 @@ describe("linear time", () => {
   const nested = (n) => "<div>".repeat(n);
 
   test("the nested elements are nested", () => {
-    let depth = 0;
-    for (let [node] = parse(nested(10)); node; [node] = node.children) depth++;
-    assert.equal(depth, 10);
+    assert.equal(roundTrip(nested(10)), nested(10) + "</div>".repeat(10));
   });
 
   for (const chunk of [

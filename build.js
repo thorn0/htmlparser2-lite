@@ -45,7 +45,9 @@ for (const [file, code, sourceType] of builds) {
     // enabling `toplevel`
     ...(sourceType == "module" && { module: true }),
     compress: { passes: 3 },
-    mangle: true,
+    // Also shortens the internal property names, which start with "_" (not
+    // "__", like __proto__)
+    mangle: { properties: { regex: /^_[a-zA-Z]/ } },
   });
   if (result.error) throw result.error;
   acorn.parse(result.code, { ecmaVersion: ECMA_VERSION, sourceType });
