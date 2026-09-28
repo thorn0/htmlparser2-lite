@@ -56,12 +56,21 @@ export interface DomCdataNode extends BaseDomNode {
 }
 
 export class Parser {
-  constructor(handler: Handler, options?: ParserOptions);
+  constructor(handler?: Handler, options?: ParserOptions);
 
-  /** Start index of the markup that triggered the current callback. */
+  /**
+   * Start index of the markup that triggered the current callback. For an
+   * element closed implicitly by a start tag, the start of that tag (and
+   * `endIndex` is one less: the empty range right before it). At the end of
+   * the input, including in `onend`, the length of the input (and `endIndex`
+   * is one less again).
+   */
   startIndex: number;
 
-  /** End index (inclusive) of the markup that triggered the current callback. */
+  /**
+   * End index (inclusive) of the markup that triggered the current callback,
+   * see `startIndex` for the exceptions.
+   */
   endIndex: number;
 
   /**
@@ -86,7 +95,9 @@ export function serialize(
 ): string;
 
 export type CreateArgument =
-  | DomNode
+  | DomTagNode
+  | DomTextNode
+  | DomCommentNode
   | string
   | { [name: string]: string }
   | null
@@ -94,8 +105,10 @@ export type CreateArgument =
   | CreateArgument[];
 
 /**
- * Creates an element. Strings become text nodes, nodes are moved from where
- * they are, other objects are attributes, arrays are flattened.
+ * Creates an element. Strings become text nodes, element, text and comment
+ * nodes become its children (moved from their parents, but not from an array
+ * of top-level nodes: remove them from it first with `remove(nodes, dom)`),
+ * other objects are attributes, arrays are flattened.
  * @param tagName Can contain CSS classes: `div.foo.bar`, `.foo` (a div)
  */
 export function create(
@@ -122,14 +135,24 @@ export function remove(nodes: DomNode | DomNode[], dom?: Dom | number): void;
  */
 export function replace(node: DomNode, replacement: DomNode, dom?: Dom): void;
 
+/**
+ * Makes `child` the last child of `tag`. If `child` is in a DOM, pass that
+ * DOM's array of top-level nodes as `dom` to move it (it's removed from where
+ * it was only then).
+ */
 export function appendChild(tag: DomTagNode, child: DomNode, dom?: Dom): void;
 
+/** Like `appendChild`, but makes `child` the first child. */
 export function prependChild(tag: DomTagNode, child: DomNode, dom?: Dom): void;
 
-/** Insert `next` after `node`. */
+/**
+ * Inserts `next` after `node`. `next` must not be in a DOM (remove it
+ * first). If `node` is a top-level node, `next` isn't added to the array of
+ * top-level nodes.
+ */
 export function append(node: DomNode, next: DomNode): void;
 
-/** Insert `prev` before `node`. */
+/** Like `append`, but inserts `prev` before `node`. */
 export function prepend(node: DomNode, prev: DomNode): void;
 
 /**
@@ -205,7 +228,8 @@ export interface ParserOptions {
   /**
    * In HTML too, parse CDATA sections as CDATA (`oncdatastart`, `ontext`,
    * `oncdataend`, `cdata` nodes) instead of comments (or text inside <svg>
-   * and <math>). Always on in XML.
+   * and <math>, but not inside elements like <foreignObject> there, which
+   * contain HTML). Always on in XML.
    *
    * Default: `false`
    */
@@ -280,9 +304,10 @@ export interface SerializerOptions {
    * `false`: output HTML, switching to `"foreign"` inside <svg> and <math>.
    *
    * The text of <script>, <style> and the other elements whose text is raw
-   * in HTML isn't escaped outside <svg> and <math>, in XML too unless
-   * `decodeEntities` is set (e.g. for HTML parsed with `recognizeSelfClosing`
-   * and written with `xmlMode: true`).
+   * in HTML isn't escaped, except inside <svg> and <math> (but inside
+   * elements like <foreignObject> there, it isn't escaped either), in XML
+   * too unless `decodeEntities` is set (e.g. for HTML parsed with
+   * `recognizeSelfClosing` and written with `xmlMode: true`).
    *
    * Default: `false`
    */
@@ -296,9 +321,11 @@ export interface SerializerOptions {
   spaceInSelfClosing?: boolean;
 
   /**
-   * For a DOM parsed with `decodeEntities`: encode `&` as well, and `>` in
-   * text and `<` in attribute values (needed for XML). In XML, the text of
-   * <script>, <style> etc. is encoded too.
+   * For a DOM parsed with `decodeEntities`: escape `&`, `<` and `>` in text
+   * and `&`, `<` and `"` in attribute values. Without it, only `<` in text
+   * and `"` in attribute values are escaped, because text that wasn't decoded
+   * is still escaped. With it, the text of <script>, <style> etc. is escaped
+   * in XML output too.
    *
    * Default: `false`
    */
