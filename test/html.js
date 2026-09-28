@@ -327,6 +327,19 @@ describe("text-only elements", () => {
     );
   });
 
+  test("the end tag that ends the text closes them whatever the case", () => {
+    const options = { lowerCaseTags: false };
+    assert.deepEqual(tree(parse("<STYLE>a</style><b>", options)), [
+      ["tag", "STYLE", [["text", "a"]]],
+      ["tag", "b", []],
+    ]);
+    // Otherwise, the comment would be inside, where it's text when parsed again
+    assert.equal(
+      roundTrip("<Script></SCRIPT><!--</Script><img>-->", options),
+      "<Script></Script><!--</Script><img>-->",
+    );
+  });
+
   test("not in XML mode", () => {
     assert.deepEqual(
       tree(parse("<script><b>x</b></script>", { xmlMode: true })),
@@ -408,6 +421,53 @@ describe("comments, CDATA, directives", () => {
   });
 });
 
+describe("HTML inside SVG and MathML", () => {
+  for (const [root, name] of [
+    ["svg", "foreignObject"],
+    ["svg", "desc"],
+    ["svg", "title"],
+    ["math", "mi"],
+    ["math", "mo"],
+    ["math", "mn"],
+    ["math", "ms"],
+    ["math", "mtext"],
+    ["math", "annotation-xml"],
+  ]) {
+    test(`<${name}>`, () => {
+      const html = `<${root}><${name}><style><b/></style><![CDATA[x]]><i/>y<image/><u></u>`;
+      assert.deepEqual(tree(parse(html)), [
+        [
+          "tag",
+          root,
+          [
+            [
+              "tag",
+              name,
+              [
+                ["style", "style", [["text", "<b/>"]]],
+                ["comment", "[CDATA[x]]"],
+                [
+                  "tag",
+                  "i",
+                  [
+                    ["text", "y"],
+                    ["tag", "img", []],
+                    ["tag", "u", []],
+                  ],
+                ],
+              ],
+            ],
+          ],
+        ],
+      ]);
+      assert.equal(
+        roundTrip(html),
+        `<${root}><${name}><style><b/></style><!--[CDATA[x]]--><i>y<img><u></u></i></${name}></${root}>`,
+      );
+    });
+  }
+});
+
 describe("attributes", () => {
   test("quoting and spacing", () => {
     assert.deepEqual(parse(`<a b = "1" c='2'd=3 e f=>`)[0].attribs, {
@@ -438,6 +498,13 @@ describe("attributes", () => {
     assert.deepEqual(parse("<a b=c d e=f>")[0].attribs, {
       b: "c d e=f",
     });
+  });
+
+  test("names starting with = aren't serialized as values", () => {
+    const [a] = parse("<a b/ =c/ =d=1>");
+    assert.deepEqual(a.attribs, { b: "", "=c": "", "=d": "1" });
+    assert.equal(serialize(a), '<a b /=c /=d="1"></a>');
+    assert.deepEqual(parse(serialize(a))[0].attribs, a.attribs);
   });
 
   test("quotes are escaped when serializing", () => {
@@ -770,6 +837,38 @@ describe("Parser", () => {
     parser.end("<b>");
     assert.deepEqual(log, ["a", "/a", "end", "b", "/b", "end"]);
   });
+
+  test("indices of implicit closes and of the end of the input", () => {
+    const log = [];
+    const parser = new Parser({
+      onclosetag: (name) => log.push([name, parser.startIndex, parser.endIndex]),
+      onend: () => log.push(["end", parser.startIndex, parser.endIndex]),
+    });
+    parser.end("<p>a<div>b");
+    parser.end("");
+    assert.deepEqual(log, [
+      // The empty range right before the tag that closes it
+      ["p", 4, 3],
+      // The end of the input: its length, and one less
+      ["div", 10, 9],
+      ["end", 10, 9],
+      ["end", 0, -1],
+    ]);
+  });
+
+  test("text comes in one event up to the next markup", () => {
+    assert.deepEqual(events("a < b <1 c</ d>e<svg>f<![CDATA[g]]>h"), [
+      ["text", "a < b <1 c"],
+      ["comment", " d"],
+      ["text", "e"],
+      ["opentag", "svg", {}],
+      ["text", "f"],
+      ["text", "g"],
+      ["text", "h"],
+      ["closetag", "svg"],
+      ["end"],
+    ]);
+  });
 });
 
 describe("linear time", () => {
@@ -865,6 +964,38 @@ describe("serialize", () => {
     );
   });
 
+  test("elements with HTML content aren't self-closing", () => {
+    assert.equal(
+      roundTrip("<svg><desc></desc><foreignObject></foreignObject><g></g></svg><math><mi></mi></math>"),
+      "<svg><desc></desc><foreignObject></foreignObject><g/></svg><math><mi></mi></math>",
+    );
+    // Otherwise, the elements after them would be in them when parsed again
+    const html = "<svg><title></title><style><!--</style><img>--></style></svg>";
+    assert.equal(roundTrip(html), html);
+    // In XML, they are
+    assert.equal(roundTrip("<svg><desc></desc></svg>", {}, { xmlMode: true }), "<svg><desc/></svg>");
+  });
+
+  test("comments that would end early", () => {
+    // In HTML, CDATA is a comment till "]]>", so it can contain "-->"
+    assert.equal(
+      roundTrip("<![CDATA[--><img src=x onerror=alert(1)>]]>"),
+      "<!--[CDATA[--&gt;<img src=x onerror=alert(1)>]]-->",
+    );
+    const serialized = serialize(
+      [">", "->", "a--!>b-->"].map((data) => ({ type: "comment", data })),
+    );
+    assert.equal(serialized, "<!--&gt;--><!---&gt;--><!--a--!&gt;b--&gt;-->");
+    assert.deepEqual(tree(parse(serialized)), [
+      ["comment", "&gt;"],
+      ["comment", "-&gt;"],
+      ["comment", "a--!&gt;b--&gt;"],
+    ]);
+    // In XML, "<!-->" doesn't end a comment
+    const xml = { xmlMode: true };
+    assert.equal(roundTrip("<!-->--><!--->-->", xml, xml), "<!-->--><!--->-->");
+  });
+
   test("text in raw text elements isn't escaped", () => {
     const { create } = htmlparser;
     assert.equal(
@@ -920,6 +1051,15 @@ describe("serialize", () => {
   test("single node", () => {
     const [div] = parse("<div>a</div>");
     assert.equal(serialize(div), "<div>a</div>");
+  });
+
+  test("<noscript> text is escaped, <SCRIPT> text isn't, root nodes are ignored", () => {
+    const { create } = htmlparser;
+    assert.equal(
+      serialize([create("noscript", "a<b"), create("SCRIPT", "a<b")]),
+      "<noscript>a&lt;b</noscript><SCRIPT>a<b</SCRIPT>",
+    );
+    assert.equal(serialize({ type: "root", children: parse("<a>") }), "");
   });
 });
 
@@ -1000,5 +1140,29 @@ describe("DOM utilities", () => {
     htmlparser.remove(b);
     htmlparser.remove(b);
     assert.equal(serialize(dom), "<p><a></a><c></c></p>");
+  });
+
+  test("the array of top-level nodes changes only where it's passed", () => {
+    const html = "<a></a><b></b>";
+    // create and append don't get it: remove the nodes from it first
+    let dom = parse(html);
+    htmlparser.create("div", dom[1]);
+    assert.equal(dom.length, 2);
+    dom = parse(html);
+    const [a, b] = dom;
+    htmlparser.remove(b, dom);
+    const div = htmlparser.create("div", b);
+    assert.deepEqual(dom, [a]);
+    assert.equal(b.parent, div);
+    htmlparser.append(a, div);
+    assert.deepEqual(dom, [a]);
+    assert.equal(a.next, div);
+    // appendChild and prependChild move a child from where it is only with it
+    dom = parse(html);
+    htmlparser.appendChild(dom[0], dom[1]);
+    assert.equal(serialize(dom), "<a><b></b></a><b></b>");
+    dom = parse(html);
+    htmlparser.prependChild(dom[0], dom[1], dom);
+    assert.equal(serialize(dom), "<a><b></b></a>");
   });
 });

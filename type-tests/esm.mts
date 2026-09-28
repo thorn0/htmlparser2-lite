@@ -36,6 +36,7 @@ const div: htmlparser.DomTagNode = htmlparser.create("div.foo", { id: "x" }, [
   htmlparser.findOne("p", dom) ?? undefined,
 ]);
 htmlparser.appendChild(div, htmlparser.create("span"));
+htmlparser.create("div", div.children, dom[0]);
 const texts: htmlparser.DomNode[] = htmlparser.filterNodes(
   (n) => n.type === "text",
   div,

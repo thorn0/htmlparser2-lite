@@ -314,6 +314,9 @@ class Parse {
     let index = 0;
     let start;
     let match;
+    // The element whose text ends at the next end tag, which closes it
+    // whatever the case of the names
+    let textOnlyElement;
 
     for (;;) {
       // The next tag, or other token after "<!", "<?" or "</"
@@ -337,7 +340,10 @@ class Parse {
       if (endTag) {
         // Drop an unterminated end tag, it can only be at the end of the
         // input
-        if (input[index - 1] == ">") state._closeTag(state._tagName(endTag));
+        if (input[index - 1] == ">") {
+          state._closeTag(textOnlyElement ?? state._tagName(endTag));
+        }
+        textOnlyElement = null;
         continue;
       }
 
@@ -458,6 +464,7 @@ class Parse {
         }
         state._text(input, index, start, textOnly > 1);
         index = start;
+        textOnlyElement = name;
       }
     }
 
@@ -654,14 +661,19 @@ const serialize = (dom, options = {}) => {
       // still written as in SVG
       const context = FOREIGN_CONTEXTS.get(name);
       if (context) mode |= 1;
+      const childMode = inContext(mode, context);
 
       output += `<${name}`;
       for (const key in attribs) {
         const value = attribs[key];
-        output += ` ${key}`;
+        // A slash keeps a name like "=x" from being the value of the
+        // attribute before it
+        output += key[0] == "=" ? ` /${key}` : ` ${key}`;
         if (value || mode) output += `="${escape(value, attributeChars)}"`;
       }
-      if (mode && !children?.length) {
+      // Like when parsing, elements with HTML content (e.g. <foreignObject>)
+      // aren't self-closing
+      if (childMode && !children?.length) {
         output += spaceInSelfClosing ? " />" : "/>";
       } else {
         output += ">";
@@ -669,7 +681,6 @@ const serialize = (dom, options = {}) => {
           stack.push(`</${name}>`);
           modes.push(0);
         }
-        const childMode = inContext(mode, context);
         for (let i = children?.length ?? 0; i--; ) {
           stack.push(children[i]);
           modes.push(childMode);
@@ -678,7 +689,10 @@ const serialize = (dom, options = {}) => {
     } else if (type == "directive") {
       output += `<${data}>`;
     } else if (type == "comment") {
-      output += `<!--${data}-->`;
+      // Escape ">" where it would end the comment early, as in the data of
+      // "<![CDATA[-->" (a comment in HTML), where "<!-->" and "<!--->" also
+      // do in HTML
+      output += `<!--${data.replace(mode & 2 ? /(--!?)>/g : /(^-?|--!?)>/g, "$1&gt;")}-->`;
     } else if (type == "cdata") {
       output += `<![CDATA[${children[0].data}]]>`;
     } else if (data) {

@@ -68,6 +68,10 @@ written with XML syntax (e.g. parsed with `recognizeSelfClosing` and serialized 
 
 Nodes that are part of a DOM are written as in the whole DOM, e.g. the content of an element inside `<svg>` as SVG.
 
+So that the output is parsed into the same elements, elements like `<foreignObject>` aren't self-closing (as when parsing), `>` is
+escaped as `&gt;` in comments where it would end them early (e.g. `<![CDATA[-->]]>` is a comment in HTML), and an attribute name
+starting with `=` is written after a `/` (not to be the value of the attribute before it).
+
 See the [type definitions](https://github.com/thorn0/htmlparser2-lite/blob/master/dist/htmlparser2-lite.d.ts) for details.
 
 ## Decoding character references
@@ -142,6 +146,8 @@ The parsing rules are those of `htmlparser2` 12, which follows the HTML spec mor
   that tag. In htmlparser2, the ranges are off in some cases.
 - Text comes in one `ontext` event up to the next markup, including any `<` that doesn't start markup. htmlparser2 can split it, e.g. at
   such a `<`.
+- With `lowerCaseTags: false`, the end tag that ends the text of `<script>`, `<style>` etc. closes the element whatever the case of their
+  names (e.g. `</style>` closes `<STYLE>`). In htmlparser2, the markup after it is then inside the element.
 
 ## Performance
 
@@ -173,8 +179,9 @@ The code is ES2022, it targets [Baseline](https://web.dev/baseline) Widely avail
   `parser.end(html)`. Handle attributes in `onopentag` instead of `onattribute`.
 - See the [parsing rules](#parsing-rules), which have changed
 - `serialize` escapes `<` in the text of `<noscript>`, and of `<script>`, `<style>` etc. in SVG and MathML (their content is markup
-  when parsing), and leaves the text of `<SCRIPT>` etc. raw whatever the case of the name. It ignores nodes of type `root`, pass
-  their `children` instead.
+  when parsing), and leaves the text of `<SCRIPT>` etc. raw whatever the case of the name. It doesn't self-close empty
+  `<foreignObject>`, `<desc>`, `<mi>` etc., and escapes `>` in comments where it would end them early. It ignores nodes of type
+  `root`, pass their `children` instead.
 
 ## Size comparison
 

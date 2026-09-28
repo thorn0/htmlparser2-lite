@@ -95,9 +95,7 @@ export function serialize(
 ): string;
 
 export type CreateArgument =
-  | DomTagNode
-  | DomTextNode
-  | DomCommentNode
+  | DomNode
   | string
   | { [name: string]: string }
   | null
@@ -298,8 +296,8 @@ export interface SerializerOptions {
    * elements like <br> aren't void, attributes always get values.
    *
    * `"foreign"`: output HTML as inside <svg> or <math>: elements without
-   * children self-close and attributes always get values, except inside
-   * elements like <foreignObject>, which contain HTML.
+   * children self-close (except elements like <foreignObject>, which contain
+   * HTML, as the output inside them is) and attributes always get values.
    *
    * `false`: output HTML, switching to `"foreign"` inside <svg> and <math>.
    *
