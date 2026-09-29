@@ -1,9 +1,13 @@
 {
   "private": true,
   "browserslist": "baseline widely available with downstream",
+  "prettier": {
+    "proseWrap": "never"
+  },
   "devDependencies": {
     "acorn": "8.18.0",
     "entities": "8.1.0",
+    "htmlparser2": "12.0.0",
     "htmlparser2-lite": "link:./dist",
     "prettier": "3.9.9",
     "typescript": "7.0.2",
@@ -13,6 +17,7 @@
     "build": "node build.js && node --test \"test/*.js\" && tsc -p ./type-tests",
     "test": "node --test \"test/*.js\"",
     "test-types": "tsc -p ./type-tests",
+    "fuzz": "node fuzz/round-trip.js && node fuzz/htmlparser2.js",
     "format": "prettier -w ."
   }
 }
