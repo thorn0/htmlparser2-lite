@@ -81,6 +81,8 @@ By default, character references like `&amp;` stay as they are. With the `decode
   });
   ```
 
+  `inAttribute` tells attribute values from text, because HTML decodes them differently: in attribute values, a named reference without `;` followed by `=` or a letter or digit isn't decoded, so that URLs keep their query parameters (`?a=1&copy=2` stays as it is, while in text it's `?a=1©=2`).
+
 To serialize a decoded DOM, pass `decodeEntities: true` to `serialize` as well. By default, it escapes only `<` in text and `"` in attribute values, because text that wasn't decoded is still escaped. With the option, it escapes `&` and `>` too (in attribute values, `&` and `<`), so that decoded text is escaped again.
 
 ## Includes
@@ -160,7 +162,7 @@ The current `htmlparser2` on Bundlephobia: https://bundlephobia.com/result?p=htm
 ## Development
 
 - `yarn build`: builds `dist/htmlparser2-lite.js` (UMD) and `dist/htmlparser2-lite.mjs` (ES module) from `src/htmlparser2-lite.js`, runs the tests and checks the types
-- `yarn test`: runs the tests against the built files
+- `yarn test`: runs the tests against the built files, including small seeded versions of the fuzzers (`test/round-trip.js`, `test/htmlparser2.js`)
 - `yarn fuzz`: runs the fuzzers against the built files, which report the smallest inputs that fail:
   - `node fuzz/round-trip.js [inputs] [seed]`: markup parsed, serialized and parsed again must give the same DOM
   - `node fuzz/htmlparser2.js [inputs] [seed]`: markup must give the same DOM as with `htmlparser2` 12, except for the [differences](#differences-from-htmlparser2-12)

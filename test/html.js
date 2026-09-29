@@ -64,7 +64,7 @@ describe("implied end tags", () => {
     // A <form> in another one is ignored
     [
       "<form a><div><form b><input></form>c",
-      '<form a><div><input></div></form>c',
+      "<form a><div><input></div></form>c",
     ],
     [
       "<select><option>a<option>b<optgroup><option>c</select>",
@@ -217,7 +217,20 @@ describe("void and self-closing elements", () => {
     );
     // <foreignObject> is only in SVG
     assert.deepEqual(tree(parse("<math><foreignobject><b/>x</math>")), [
-      ["tag", "math", [["tag", "foreignobject", [["tag", "b", []], ["text", "x"]]]]],
+      [
+        "tag",
+        "math",
+        [
+          [
+            "tag",
+            "foreignobject",
+            [
+              ["tag", "b", []],
+              ["text", "x"],
+            ],
+          ],
+        ],
+      ],
     ]);
   });
 
@@ -280,7 +293,9 @@ describe("text-only elements", () => {
   });
 
   test("the others", () => {
-    for (const name of "xmp iframe noembed noframes title textarea".split(" ")) {
+    for (const name of "xmp iframe noembed noframes title textarea".split(
+      " ",
+    )) {
       assert.deepEqual(tree(parse(`<${name}><b>&amp;</${name}>`)), [
         ["tag", name, [["text", "<b>&amp;"]]],
       ]);
@@ -323,7 +338,13 @@ describe("text-only elements", () => {
     ]);
     assert.deepEqual(
       tree(parse("<svg><desc><style><b/></style></desc></svg>")),
-      [["tag", "svg", [["tag", "desc", [["style", "style", [["text", "<b/>"]]]]]]]],
+      [
+        [
+          "tag",
+          "svg",
+          [["tag", "desc", [["style", "style", [["text", "<b/>"]]]]]],
+        ],
+      ],
     );
   });
 
@@ -546,8 +567,7 @@ describe("the end of the input", () => {
     ["a<![CDATA[b", "a<![CDATA[b]]>"],
   ]) {
     test(`${JSON.stringify(xml)} in XML`, () =>
-      assert.equal(roundTrip(xml, { xmlMode: true }), expected),
-    );
+      assert.equal(roundTrip(xml, { xmlMode: true }), expected));
   }
 
   test("unterminated start tag emits no events", () => {
@@ -571,6 +591,27 @@ describe("decodeEntities", () => {
     );
     assert.deepEqual(a.attribs, { b: `"A'` });
     assert.equal(a.children[0].data, "<&A😀&AMP;&amp ���");
+    // Surrogates and code points past U+10FFFF aren't characters
+    const codePoints = [
+      0xd7ff, 0xd800, 0xdbff, 0xdc00, 0xdfff, 0xe000, 0x10ffff, 0x110000,
+    ];
+    const [text] = parse(
+      codePoints.map((n) => `&#x${n.toString(16)};`).join(""),
+      xml,
+    );
+    assert.equal(
+      text.data,
+      String.fromCodePoint(
+        0xd7ff,
+        0xfffd,
+        0xfffd,
+        0xfffd,
+        0xfffd,
+        0xe000,
+        0x10ffff,
+        0xfffd,
+      ),
+    );
   });
 
   test("HTML mode needs a DOM or a function", () => {
@@ -810,7 +851,8 @@ describe("Parser", () => {
       parse(`<x a="1" c>`, { xmlMode: true });
       return text;
     };
-    const html = '<a x="&1" y="&2" z=3><script>a</b></script><b c="&3">d</b></a>';
+    const html =
+      '<a x="&1" y="&2" z=3><script>a</b></script><b c="&3">d</b></a>';
     const dom = parse(html, { decodeEntities: parseMore });
     assert.deepEqual(dom[0].attribs, { x: "&1", y: "&2", z: "3" });
     assert.equal(serialize(dom), roundTrip(html));
@@ -841,7 +883,8 @@ describe("Parser", () => {
   test("indices of implicit closes and of the end of the input", () => {
     const log = [];
     const parser = new Parser({
-      onclosetag: (name) => log.push([name, parser.startIndex, parser.endIndex]),
+      onclosetag: (name) =>
+        log.push([name, parser.startIndex, parser.endIndex]),
       onend: () => log.push(["end", parser.startIndex, parser.endIndex]),
     });
     parser.end("<p>a<div>b");
@@ -966,14 +1009,20 @@ describe("serialize", () => {
 
   test("elements with HTML content aren't self-closing", () => {
     assert.equal(
-      roundTrip("<svg><desc></desc><foreignObject></foreignObject><g></g></svg><math><mi></mi></math>"),
+      roundTrip(
+        "<svg><desc></desc><foreignObject></foreignObject><g></g></svg><math><mi></mi></math>",
+      ),
       "<svg><desc></desc><foreignObject></foreignObject><g/></svg><math><mi></mi></math>",
     );
     // Otherwise, the elements after them would be in them when parsed again
-    const html = "<svg><title></title><style><!--</style><img>--></style></svg>";
+    const html =
+      "<svg><title></title><style><!--</style><img>--></style></svg>";
     assert.equal(roundTrip(html), html);
     // In XML, they are
-    assert.equal(roundTrip("<svg><desc></desc></svg>", {}, { xmlMode: true }), "<svg><desc/></svg>");
+    assert.equal(
+      roundTrip("<svg><desc></desc></svg>", {}, { xmlMode: true }),
+      "<svg><desc/></svg>",
+    );
   });
 
   test("comments that would end early", () => {
@@ -1007,7 +1056,8 @@ describe("serialize", () => {
 
   test("undecoded raw text isn't escaped in XML output either", () => {
     // Like with htmlparser2-20kb, e.g. for HTML with self-closing tags
-    const markup = '<div><script>if (a<b) f("</p>")</script><x a="1"/>1 &lt; 2</div>';
+    const markup =
+      '<div><script>if (a<b) f("</p>")</script><x a="1"/>1 &lt; 2</div>';
     assert.equal(
       roundTrip(markup, { recognizeSelfClosing: true }, { xmlMode: true }),
       markup,
@@ -1042,7 +1092,10 @@ describe("serialize", () => {
         serialize(svg.children[0].children, { xmlMode }),
         '<style>a&lt;b</style><circle r="1"/>',
       );
-      assert.equal(serialize(findOne("script", dom), { xmlMode }), "<script>a<b</script>");
+      assert.equal(
+        serialize(findOne("script", dom), { xmlMode }),
+        "<script>a<b</script>",
+      );
     }
     assert.equal(serialize(findOne("br", dom)), "<br>");
     assert.equal(serialize(findOne("br", dom), { xmlMode: "foreign" }), "<br>");
