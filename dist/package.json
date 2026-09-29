@@ -1,7 +1,7 @@
 {
   "name": "htmlparser2-lite",
   "description": "Fast & forgiving HTML/XML parser for the browser, < 9 KB minified, no dependencies, htmlparser2-compatible",
-  "version": "2.0.2",
+  "version": "2.0.3",
   "contributors": [
     "Felix Boehm <me@feedic.com>",
     "Georgii Dolzhykov <georgii.dolzhykov@gmail.com>"
